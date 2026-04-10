@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lassi Corner POS System</title>
+    <link rel="stylesheet" href="src/renderer/styles/styles.css">
+    <link rel="stylesheet" href="src/renderer/styles/settings.css">
+    <link rel="stylesheet" href="src/renderer/styles/inventory.css">
+    <link rel="stylesheet" href="src/renderer/styles/history.css">
+    <link rel="stylesheet" href="src/renderer/styles/analytics.css">
+    <link rel="stylesheet" href="src/renderer/styles/categories.css">
+    <link rel="stylesheet" href="src/renderer/styles/menu.css">
+</head>
+<body>
+  <!-- Top Horizontal Panel -->
+  <div id="top-panel">
+    <button class="top" id="Home" onclick="updateMainContent('Home')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/>
+            <path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        </svg>
+        Home
+    </button>
+    <button class="top" id="History" onclick="updateMainContent('History')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+            <path d="M12 7v5l4 2"/>
+        </svg>
+        History
+    </button>
+    <button class="top" id="Menu" onclick="updateMainContent('Menu')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>
+        </svg>
+        Menu
+    </button>
+    <button class="top" id="Categories" onclick="updateMainContent('Categories')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 4h18M3 12h18M3 20h18"/>
+        </svg>
+        Categories
+    </button>
+    <button class="top" id="Analytics" onclick="updateMainContent('Analytics')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"/><path d="M7 14l3-3 2 2 3-3 4 4"/>
+        </svg>
+        Analytics
+    </button>
+    <button class="top" id="Inventory" onclick="updateMainContent('Inventory')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3h18v18H3z"/>
+            <path d="M3 9h18M3 15h18"/>
+        </svg>
+        Inventory
+    </button>
+    <button class="top" id="Settings" onclick="updateMainContent('Settings')">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" 
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" 
+            stroke-linejoin="round" class="lucide lucide-settings">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+        </svg>
+        Settings
+    </button>
+</div>
+
+
+
+  <!-- Main Content -->
+  <div id="content">
+    <!-- Left Vertical Panel -->
+    <div id="category-panel">
+
+    </div>
+
+    <!-- Main Content Area -->
+    <div id="main-content">
+      <h2 id="welcome-user">Welcome to LASSI CORNER!</h2>
+      <p>Time to make some sales!</p>
+    </div>
+
+<!-- Bill Panel (Right Side) -->
+<div id="bill-panel">
+<div class="bill-resize-handle"></div>
+
+  <!-- Flexbox for H3 and Reset Button -->
+  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 10px;">
+    <div id='upperbuttons' style="display: flex; gap: 10px;">
+        <button onclick="NewOrder()" style="font-size: 14px; padding: 5px 10px; color: white; border: none; border-radius: 5px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/>
+                <line x1="12" x2="12" y1="8" y2="16"/>
+                <line x1="8" x2="16" y1="12" y2="12"/>
+            </svg>
+            New Order
+        </button>
+        <button id='heldorders' onclick="displayHeld()" style="font-size: 14px; padding: 5px 10px; color: white; border: none; border-radius: 5px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="10" x2="10" y1="15" y2="9"/>
+                <line x1="14" x2="14" y1="15" y2="9"/>
+            </svg>
+            Held Orders
+        </button>
+        <button id="applydiscountbutton" onclick="toggleDiscountPopup()" style="font-size: 14px; padding: 5px 10px; color: white; border: none; border-radius: 5px; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" x2="5" y1="5" y2="19"/>
+                <circle cx="6.5" cy="6.5" r="2.5"/>
+                <circle cx="17.5" cy="17.5" r="2.5"/>
+            </svg>
+            Apply Discount
+        </button>
+    </div>
+  </div>
+
+
+
+  <div id="bill-items-list">
+      <!-- Items will be dynamically added here -->
+  </div>
+  <hr>
+  <div id="total-discount-container">
+    <div id="discount-applied-display">Discount: Rs. 0.00</div>
+    <div id="total-amount">Total: Rs. 0.00</div>
+  </div>
+
+
+<!-- Buttons Section - HOLD AND SAVE AND PRINT AND APPLY DISCOUNT -->
+<div id="bill-buttons">
+  <button id='saveandprintbutton' onclick="saveAndPrintBill()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/>
+          <rect x="6" y="14" width="12" height="8" rx="1"/>
+      </svg>
+      B&K
+  </button>
+
+  <button id='kotbutton' onclick="saveAndPrintKOT()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 2 4 22"/>
+          <path d="M20 2 18 22"/>
+          <path d="M2 12h20"/>
+          <path d="M2 7h20"/>
+          <path d="M2 17h20"/>
+      </svg>
+      KOT
+  </button>
+
+  <button id='savebutton' onclick="saveBill()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="13" height="7" x="8" y="3" rx="1"/>
+          <path d="m2 9 3 3-3 3"/>
+          <rect width="13" height="7" x="8" y="14" rx="1"/>
+      </svg>
+      Save
+  </button>
+
+  <button id='holdbutton' onclick="holdBill()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="14" y="4" width="4" height="16" rx="1"/>
+          <rect x="6" y="4" width="4" height="16" rx="1"/>
+      </svg>
+      Hold
+  </button>
+
+  <button id='saveToOrder' onclick="displayTodaysOrders()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 12H3"/>
+          <path d="M16 6H3"/>
+          <path d="M16 18H3"/>
+          <path d="M18 9v6"/>
+          <path d="M21 12h-6"/>
+      </svg>
+      Save To Order
+  </button>
+</div>
+</div>
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const role = localStorage.getItem('userRole');
+        const userName = localStorage.getItem('userName');
+
+        console.log(`Logged in as ${userName} with role ${role}`);
+
+        if (role === 'staff') {
+            document.getElementById('Analytics').style.display = 'none';
+            // Staff can now access History tab with limited permissions
+        }
+
+        // Optional: show greeting
+        const welcome = document.getElementById('welcome-user');
+        if (welcome && userName) {
+            welcome.textContent = `Welcome, ${userName}`;
+        }
+
+        // 👇 Check query param and click Home if needed
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('goHome') === 'true') {
+            const homeBtn = document.getElementById('Home');
+            if (homeBtn) homeBtn.click();
+        }
+
+        // Machine-specific blank screen detection and recovery
+        setTimeout(() => {
+            const { ipcRenderer } = require('electron');
+            
+            // Check if critical elements are present and visible
+            const topPanel = document.getElementById('top-panel');
+            const mainContent = document.getElementById('main-content');
+            const body = document.body;
+            
+            const isBlankScreen = !topPanel || !mainContent || 
+                                 body.offsetHeight < 100 || 
+                                 body.offsetWidth < 100 ||
+                                 window.getComputedStyle(body).display === 'none';
+            
+            if (isBlankScreen) {
+                console.error('🚨 Machine-specific blank screen detected!');
+                console.log('Debug info:', {
+                    topPanel: !!topPanel,
+                    mainContent: !!mainContent,
+                    bodyHeight: body.offsetHeight,
+                    bodyWidth: body.offsetWidth,
+                    bodyDisplay: window.getComputedStyle(body).display
+                });
+                
+                // Force a repaint and reload
+                document.body.style.display = 'none';
+                setTimeout(() => {
+                    document.body.style.display = '';
+                    
+                    // If still blank, force refresh
+                    setTimeout(() => {
+                        if (body.offsetHeight < 100) {
+                            console.log('🔄 Forcing page refresh for machine-specific fix');
+                            window.location.reload();
+                        }
+                    }, 500);
+                }, 100);
+            } else {
+                console.log('✅ Page loaded successfully with content');
+            }
+        }, 2000);
+    });
+</script>
+
+    <script>
+        require("./src/renderer/modules/bootstrap.js");
+    </script>
+
+</body>
+</html>

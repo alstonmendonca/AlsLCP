@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.build/
+
+# Generated/temporary files
+*.xlsx
+*.png
+bill.txt
+count_lines.py

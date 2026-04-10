@@ -1,0 +1,958 @@
+:root {
+    --first-color: #2b89c4;
+    --second-color: #2b89c4;
+    --third-color: #b2def6;
+    --fourth-color: #fbcf83d6;
+    --all-table-header-color: #0D3B66 ;
+    --all-table-header-hover: #11487b;
+    --fifth-color: #fafafa;
+    --danger-color: #f44336;
+    --danger-hover: #d32f2f;
+    --primary-color: #0D3B66;
+    --primary-hover: #11487b;
+    --primary-light: rgba(13, 59, 102, 0.1);
+    --white: #ffffff;
+    --light-gray: #f8f9fa;
+    --border-color: #e2e8f0;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+/* Scrollbar for everything */
+*::-webkit-scrollbar {
+    width: 6px;
+}
+
+*::-webkit-scrollbar-track {
+    background: #cfcece;
+    border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Container for left and main panels */
+#content {
+    display: flex;
+    flex: 1;
+    padding: 0px;
+    overflow-y: auto;
+}
+
+/* Left Vertical Panel */
+#category-panel {
+    position: fixed;
+    left: 0;
+    width: 200px; /* Fixed width for the panel */
+    padding: 0; /* Remove padding to ensure buttons take full width */
+    border-right: 1px solid #ddd; /* Add a border to separate from main content */
+    display: flex;
+    flex-direction: column; /* Arrange buttons in a column */
+    height: calc(100vh - 50px); /* Full height minus top panel */
+    overflow-y: auto; /* Enable vertical scrolling */
+    scrollbar-gutter: stable; /* Isn't this line pointless?? It doesn't store the scroll positions */
+    background-color: #555;
+}
+
+/* Hide scrollbar for WebKit browsers (Chrome, Safari) */
+#category-panel::-webkit-scrollbar {
+    display: none; /* Hide scrollbar */
+}
+
+/* Category Buttons */
+#category-panel button.category {
+    flex-grow: 1; /* Allow buttons to grow and fill available space */
+    padding: 20px; /* Increase padding for better clickability */
+    margin: 0; /* Remove margin to eliminate gaps */
+    border: none; /* Remove default button border */
+    color: #ffffff; /* White text color */
+    text-align: center; /* Center text */
+    font-size: 16px; /* Set font size */
+    font-weight: bold;
+    cursor: pointer; /* Show pointer cursor on hover */
+    transition: background-color 0.3s ease; /* Smooth hover transition */
+    border-radius: 0; /* Remove rounded corners for perfect rectangles */
+    border-bottom: 1px solid #666; /* Add a thin line at the bottom of each button */
+}
+
+#category-panel button.category:last-child {
+    border-bottom: none; /* Remove the bottom border from the last button */
+}
+
+#category-panel button.category:hover {
+    background-color: #555; /* Slightly lighter background on hover */
+}
+
+#category-panel button.category:active {
+    background-color: #333; /* Darker background on click */
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    #content {
+        flex-direction: column;
+    }
+    #category-panel {
+        width: 100%; /* Full width on smaller screens */
+        border-right: none; /* Remove border on smaller screens */
+        border-bottom: 1px solid #ddd; /* Add a bottom border instead */
+    }
+}
+
+.category {
+    width: 100%;
+    padding: 10px;
+    background-color: #444;
+    border: none;
+    cursor: pointer;
+    text-align: center;
+    margin-bottom: 10px;
+    box-sizing: border-box;
+    transition: background-color 0.3s ease;
+}
+
+.category:hover {
+    background-color: #ccc;
+    color: #333;
+}
+
+/* Active Category Button Style */
+#category-panel .category.active {
+    background-color: #194b7a; /* Highlight color */
+    color: white;
+    font-weight: bold;
+}
+
+#category-panel .category.active:hover {
+    background-color: #194b7a; /* Highlight color */
+    color: white;
+    font-weight: bold;
+}
+
+/* Logout Button Styling */
+#category-panel .logout-btn {
+    background-color: #dc3545 !important;
+    color: white !important;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    border-top: 2px solid #999 !important;
+    margin-top: auto !important;
+}
+
+#category-panel .logout-btn:hover {
+    background-color: #c82333 !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(220, 53, 69, 0.3);
+}
+
+#category-panel .logout-btn:active {
+    background-color: #bd2130 !important;
+    transform: translateY(0);
+}
+
+#category-panel .logout-btn svg {
+    transition: transform 0.3s ease;
+}
+
+#category-panel .logout-btn:hover svg {
+    transform: translateX(3px);
+}
+
+/* Main Content Area */
+#main-content {
+    margin-left: 200px; /* Same as category panel width */
+    margin-right: 0;
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    justify-content: space-evenly;
+    background: linear-gradient(135deg, #fbf9f9, #ffffff);
+    transition: margin-right 0.3s ease;
+    min-width: 0; /* Prevents overflow issues */
+    box-sizing: border-box;
+}
+
+/* Responsive grid for food items */
+.food-items {
+    display: grid;
+    gap: 20px;
+    transition: all 0.3s ease;
+}
+
+/* Dynamic grid adjustments based on available space */
+@media (max-width: 1800px) {
+    .food-items[data-columns="6"] { 
+        grid-template-columns: repeat(5, 1fr) !important; 
+    }
+}
+
+@media (max-width: 1600px) {
+    .food-items[data-columns="5"], 
+    .food-items[data-columns="6"] { 
+        grid-template-columns: repeat(4, 1fr) !important; 
+    }
+}
+
+@media (max-width: 1400px) {
+    .food-items[data-columns="4"], 
+    .food-items[data-columns="5"], 
+    .food-items[data-columns="6"] { 
+        grid-template-columns: repeat(3, 1fr) !important; 
+    }
+}
+
+@media (max-width: 1200px) {
+    .food-items[data-columns="3"], 
+    .food-items[data-columns="4"], 
+    .food-items[data-columns="5"], 
+    .food-items[data-columns="6"] { 
+        grid-template-columns: repeat(2, 1fr) !important; 
+    }
+}
+
+@media (max-width: 900px) {
+    .food-items { 
+        grid-template-columns: 1fr !important; 
+    }
+}
+
+/* Bill Panel (Right Side) */
+#bill-panel {
+    position: fixed;
+    right: 0;
+    width: 600px;
+    min-width: 300px;
+    max-width: 800px;
+    padding: 15px 20px;
+    border-left: 2px solid #e0e0e0;
+    box-shadow: -2px 0 10px rgba(0, 0, 0, 0.05);
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 50px);
+    background: #ffffff;
+    z-index: 100;
+    resize: horizontal;
+    overflow: auto;
+}
+
+#bill-panel::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    cursor: col-resize;
+    background: linear-gradient(90deg, transparent 0%, rgba(13, 59, 102, 0.1) 50%, transparent 100%);
+    transition: background 0.2s ease;
+    z-index: 1001;
+}
+
+#bill-panel:hover::before {
+    background: linear-gradient(90deg, transparent 0%, rgba(13, 59, 102, 0.3) 50%, transparent 100%);
+}
+
+#bill-panel h3 {
+    margin-top: 0;
+    color: #0D3B66;
+    font-size: 1.2em;
+}
+
+/* Scrollable Bill Items List */
+#bill-items-list {
+    padding: 10px;
+    margin: 15px 0;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    flex-grow: 1;
+    overflow-y: auto;
+    height: calc(100vh - 300px);
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    background: #f8f9fa;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Separation line between content and bill panel */
+#content > #main-content {
+    border-right: 2px solid #c6c6c6;
+}
+/* Separation line between content and bill panel */
+#content > #category-panel {
+    border-right: 4px solid #c6c6c6;
+}
+
+/* Bill Items */
+.bill-item {
+    display: grid;
+    grid-template-columns: 2fr 1fr 0.5fr 1fr 0.5fr 1fr auto;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.bill-item-name {
+    font-weight: bold;
+    text-align: left;
+    padding-left: 6px;
+}
+
+.bill-quantity, .bill-price, .bill-total {
+    text-align: center;
+    min-width: 50px;
+}
+
+.bill-item button {
+    background-color: var(--danger-color);
+    color: white;
+    border: none;
+    cursor: pointer;
+    padding: 5px 10px;
+    font-size: 14px;
+    border-radius: 5px;
+    margin-top: 2px;
+}
+
+.bill-item button:hover {
+    background-color: var(--danger-hover);
+}
+
+.bill-item {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.bill-item.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Total Amount & Discount Applied display */
+#total-discount-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin: 15px 0;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+}
+
+#discount-applied-display {
+    font-size: 16px;
+    font-weight: 600;
+    text-align: left;
+    color: #666;
+}
+
+#total-amount {
+    font-size: 20px;
+    font-weight: bold;
+    text-align: right;
+    color: #0D3B66;
+}
+
+/* Bill Buttons - Fixed at Bottom */
+#bill-buttons {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: #ffffff;
+    padding: 15px;
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid #e0e0e0;
+    gap: 10px;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+}
+
+#bill-buttons button {
+    flex: 1;
+    padding: 12px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.2s ease;
+    background: #0D3B66;
+    color: white;
+}
+
+#bill-buttons button:hover {
+    background: #11487b;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+#bill-buttons button:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+/* Apply Discount Inputs */
+#discount-section input {
+    width: 100%;
+    padding: 5px;
+    margin: 5px 0;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+/* CSS to improve the display of discount section */
+#discount-section {
+    margin-top: 15px;
+    display: none;  /* Hidden by default */
+    padding: 10px;
+    bottom: 10px;
+    background-color: #f1f1f1;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;  /* Stack the children (labels + inputs) vertically */
+}
+
+#discount-section div {
+    display: flex;
+    align-items: center;  /* Align the label and input horizontally */
+    margin-bottom: 10px;  /* Space between label-input pairs */
+}
+
+#discount-section label {
+    margin-right: 10px; /* Space between the label and the input */
+    white-space: nowrap;  /* Prevent label text from wrapping */
+}
+
+#discount-section input {
+    padding: 5px;
+    width: 150px; /* Adjust the width of the input */
+    font-size: 16px;
+}
+
+#apply-discount-btn {
+    padding: 5px 10px;
+    background-color: #0D3B66;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    width: 100%;  /* Make the button take full width of the container */
+    max-width: 250px;
+}
+
+#apply-discount-btn:hover {
+    background-color: var(--secondary-color);
+}
+
+button {
+    padding: 10px 20px;
+    background-color: #0D3B66;
+    color: white;
+    font-size: 14px;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:hover {
+    background-color: #11487b;
+}
+
+button:focus {
+    outline: none;
+}
+
+
+/* Basic styling for the quantity buttons and input */
+.quantity-btn {
+    background-color: #f4f4f4;
+    border: 1px solid #ddd;
+    padding: 0px 0px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: background-color 0.3s ease;
+    margin: 0px;
+}
+
+.quantity-btn:hover {
+    background-color: #ddd;
+}
+
+input[type="number"] {
+    width: 50px;
+    text-align: center;
+    font-size: 16px;
+    padding: 5px;
+    border: 1px solid #ddd;
+    margin: 0 0px;
+}
+/* General fade effect */
+.fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+/*FOR THE SCROLL OPTION IN THE TABLE DISPLAYED WHEN THE CATEGORIES ARE CLICKED */
+.table-container {
+    max-height: 400px; /* Adjust this height based on your UI */
+    overflow-y: auto; /* Enables vertical scrolling */
+    border: 1px solid #ccc; /* Optional: for better visibility */
+    margin-top: 10px; /* Optional: spacing above the table */
+}
+
+/* Optional: Add a scrollbar style for better visuals */
+.table-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background-color: #ccc;
+    border-radius: 4px;
+}
+
+/* Add space below the header */
+h1 {
+    margin-bottom: 20px; /* Adjust the spacing as needed */
+}
+
+.toggle-switch {
+    cursor: pointer;
+    width: 40px;
+    height: 20px;
+    appearance: none;
+    background: red;
+    border-radius: 10px;
+    position: relative;
+}
+
+.toggle-switch:checked {
+    background: #0D3B66;
+    accent-color: #0D3B66;   
+}
+
+.toggle-switch::before {
+    content: "";
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    top: 1px;
+    left: 2px;
+    transition: 0.3s;
+}
+
+.toggle-switch:checked::before {
+    left: 20px;
+}
+
+.edit-icon {
+    cursor: pointer;
+    margin-left: 10px;
+    color: blue;
+}
+
+.remove-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    color: red;
+}
+
+/* Scrollbar Styling */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px; /* Make scrollbar thinner */
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f1f1; /* Light background */
+    border-radius: 10px; /* Rounded track */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #888; /* Scrollbar handle */
+    border-radius: 10px; /* Rounded handle */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #555; /* Darker when hovered */
+}
+
+/*disable text selection*/
+* {
+    user-select: none; /* Prevents text selection */
+}
+
+
+/* COLOR SECTION IS HERE ----- ALL UI COLORING IS PRESENT HEERE ------------------------------------- */
+
+
+/* Top Horizontal Panel */
+/* Button Styling */
+
+#top-panel {
+    color: #edf2f4;
+    display: flex;
+    justify-content: space-evenly; /* Space buttons evenly */
+    align-items: stretch;
+    height: 50px; /* Adjust the height of the panel */
+    border-bottom: 2px solid #051524;
+}
+#top-panel button {
+    background-color: #0D3B66;
+    color: whitesmoke;
+    font-weight: bold;
+}
+.top {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px; /* Space between icon and text */
+    padding: 8px;
+    width: 100%;
+    color: white;
+    border-right: 1px solid #ffffff; /* Thin border for separation */
+    cursor: pointer;
+    text-align: center;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Subtle shadow */
+    border-radius: 0px;
+    background: none;
+    border: none;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+/* Button Hover and Active Effects */
+.top:hover {
+    background-color: #555;
+    transform: translateY(-2px);
+}
+
+.top:active {
+    background-color: #666;
+    transform: translateY(0);
+}
+
+/* Active Button Style */
+#top-panel .top.active {
+    background-color: #145088; /* Highlight color */
+    color: white;
+    font-weight: bold;
+}
+
+/* SVG Icon Styling */
+.top svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 1.8;
+}
+
+/*----------------------- COLORS SECTION ENDS HERE ------------------------------------------------------------------- */
+/* Bill Panel border glow effect after save button is pressed */
+.glow {
+    animation: glow-animation 1s forwards;
+}
+
+@keyframes glow-animation {
+    0% {
+        box-shadow: inset 0 0 5px rgba(0, 255, 0, 0.5); /* Start with a light green glow */
+    }
+    50% {
+        box-shadow: inset 0 0 15px rgba(0, 255, 0, 1); /* Bright green glow */
+    }
+    100% {
+        box-shadow: inset 0 0 0 rgba(0, 255, 0, 0); /* Fade out */
+    }
+}
+
+#exportExcelButton {
+    background-color: #1d6f42; /* green background */
+    color: white; /* White text */
+    border: none; /* Remove border */
+    padding: 10px 20px; /* Add padding */
+    font-size: 1rem; /* Set font size */
+    border-radius: 5px; /* Rounded corners */
+    cursor: pointer; /* Pointer cursor on hover */
+    transition: background-color 0.3s ease; /* Smooth hover effect */
+}
+
+#exportExcelButton:hover {
+    background-color: #1a5735; /* Darker green on hover */
+}
+
+/* ================================================ STYLING FOR THE TITLES OF ALL SECTIONS STARTS HERE ========================================================= */
+
+/* Center the header and make it visually appealing */
+.todays-orders-header, .order-history-header, .category-history-header, .deleted-orders-header, .discounted-orders-header, .item-history-header,
+.item-summary-header, .category-wise-sales-header, .top-selling-items-header, .top-selling-categories-header, .day-end-summary-header, .categories-title,
+.customer-header, .business-info-header, .theme-toggle-header, .display-settings-header,.search-order-header, .menu-section-title, .arrange-menu-header, 
+.printer-configuration-header, .customize-panel-header, .help-and-support-header, .change-password-header, .business-info-header{
+    text-align: center; /* Center the content */
+    margin-bottom: 20px; /* Add some spacing below the header */
+}
+
+.todays-orders-header h1, .order-history-header h1, .category-history-header h1, .deleted-orders-header h1, .discounted-orders-header h1, .item-history-header h1,
+.item-summary-header h2, .category-wise-sales-header h2, .top-selling-items-header h2, .top-selling-categories-header h2, .day-end-summary-header h2,
+.categories-title h2, .customer-header h2, .business-info-header h1, .theme-toggle-header h2, .display-settings-header h2, .search-order-header h2, .menu-section-title h2, 
+.arrange-menu-header h2, .printer-configuration-header h2, .customize-panel-header h2, .help-and-support-header h2, .change-password-header h2, .business-info-header h2{
+    font-size: 2.5rem; /* Increase font size */
+    font-weight: bold; /* Make it bold */
+    color: #2c3e50; /* Use a dark, professional color */
+    margin-bottom: 20px; /* Add spacing below the heading */
+    text-transform: uppercase; /* Uppercase the text for emphasis */
+    letter-spacing: 2px; /* Add spacing between letters */
+    padding-bottom: 10px; /* Add padding to create space for the border */
+    border-bottom: 3px solid #0D3B66; /* Add a blue line underneath the title */
+}
+
+.homeFoodTitle h2{
+    text-align: center; /* Center the content */
+    font-size: 1.8rem; /* Increase font size */
+    font-weight: bold; /* Make it bold */
+    color: #2c3e50; /* Use a dark, professional color */
+    margin-bottom: 20px; /* Add spacing below the heading */
+    text-transform: uppercase; /* Uppercase the text for emphasis */
+    letter-spacing: 2px; /* Add spacing between letters */
+    padding-bottom: 8px; /* Add padding to create space for the border */
+    border-bottom: 3px solid #0D3B66; /* Add a blue line underneath the title */
+}
+
+/* ================================================ STYLING FOR THE TITLES OF ALL SECTIONS ENDS HERE =====================================================================*/
+
+/* ================================================ DATE FILTERS FOR HISTORY AND ANALYTICS SECTIONS STARTS HERE ========================================================= */
+
+/* THE BELOW DATE FILTERS ARE SHARED BY THE HISTORY AND ANALYTICS SECTION */
+.date-filters {
+    display: flex;
+    justify-content: center; /* Center the filters horizontally */
+    align-items: center; /* Align items vertically */
+    gap: 10px; /* Add spacing between elements */
+    margin-bottom: 20px; /* Add spacing below the filters */
+}
+
+.date-filters label {
+    font-size: 1rem;
+    color: #2c3e50; /* Match the heading color */
+}
+
+/* Style for date inputs specifically */
+input[type="date"] {
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background-color: white;
+    color: #333;
+    font-size: 14px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 18px;
+}
+
+
+.date-filters select {
+    padding: 5px;
+    font-size: 1rem;
+    border: 1px solid #ccc; /* Light border */
+    border-radius: 5px; /* Rounded corners */
+}
+
+.date-filters button {
+    background-color: #104475; /* Default Blue */
+    color: white; /* White text */
+    border: none; /* Remove border */
+    padding: 10px 20px; /* Add padding */
+    font-size: 1rem; /* Set font size */
+    border-radius: 5px; /* Rounded corners */
+    cursor: pointer; /* Pointer cursor on hover */
+    transition: background-color 0.3s ease; /* Smooth hover effect */
+}
+
+.date-filters button:hover {
+    background-color: #092947; /* Darker Blue */
+}
+/* ================================================ DATE FILTERS FOR HISTORY AND ANALYTICS SECTIONS ENDS HERE =========================================================== */
+
+/*Held orders Display*/
+#heldpopup {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+#discount-popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+#discount-popup .popup-content {
+    width: 380px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    padding: 28px;
+    animation: slideUp 0.3s ease-out;
+}
+
+#discount-popup h3 {
+    font-size: 24px;
+    color: #0D3B66;
+    margin: 0 0 24px 0;
+    text-align: center;
+    font-weight: 600;
+}
+
+#discount-popup .input-group {
+    margin-bottom: 20px;
+}
+
+#discount-popup label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #4a5568;
+    font-size: 14px;
+}
+
+#discount-popup input {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 15px;
+    transition: all 0.2s;
+    background-color: #f8fafc;
+}
+
+#discount-popup input:focus {
+    border-color: #0D3B66;
+    box-shadow: 0 0 0 3px rgba(13, 59, 102, 0.1);
+    background-color: white;
+    outline: none;
+}
+
+#discount-popup input:disabled {
+    background-color: #edf2f7;
+    cursor: not-allowed;
+}
+
+#discount-popup .popup-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+#discount-popup button {
+    min-width: 120px;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+#discount-popup #apply-discount-btn {
+    background-color: #0D3B66;
+    color: white;
+    border: none;
+}
+
+#discount-popup #apply-discount-btn:hover {
+    background-color: #11487b;
+    transform: translateY(-1px);
+}
+
+#discount-popup #closePopup {
+    background-color: white;
+    color: #4a5568;
+    border: 2px solid #e2e8f0;
+}
+
+#discount-popup #closePopup:hover {
+    background-color: #f7fafc;
+    border-color: #cbd5e0;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.top-selling-table th, .employee-table th, .day-wise-table th, .month-wise-table th, .year-wise-table th {
+    padding: 10px; 
+    cursor: pointer;
+    border-right: 1px solid #fff;
+}
+.top-selling-table th:hover, .employee-table th:hover, .day-wise-table th:hover, .month-wise-table th:hover, .year-wise-table th:hover {
+    background-color: #11487b;
+}
+.top-selling-table tr:hover, .employee-table tr:hover, .day-wise-table tr:hover, .month-wise-table tr:hover, .year-wise-table tr:hover {
+    background-color: #e9ecef;
+}
+

@@ -1,0 +1,95 @@
+{
+  "name": "lassi-corner",
+  "version": "1.0.4",
+  "main": "main.js",
+  "description": "Lassi Corner POS System",
+  "author": "Alston Daniel Mendonca & Reevan D Mello",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alstonmendonca/ProperLCP.git"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electronmon .",
+    "verify:compat": "node scripts/verify-compat-shims.js",
+    "verify:layout": "node scripts/verify-project-structure.js",
+    "verify:structure": "npm run verify:compat && npm run verify:layout",
+    "verify:syntax": "node --check src/main/main.js && node --check src/main/backup.js && node --check src/main/restore.js && node --check src/renderer/modules/renderer.js && node --check src/renderer/modules/ui.js",
+    "validate": "npm run verify:structure && npm run verify:syntax",
+    "package": "electron-builder --dir",
+    "make": "electron-builder",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "build": {
+    "icon": "assets/images/favicon.ico",
+    "appId": "com.lassicorner.app",
+    "productName": "Lassi Corner",
+    "artifactName": "Lassi Corner Setup.exe",
+    "extraResources": [
+      {
+        "from": "LC.db",
+        "to": "LC.db"
+      },
+      {
+        "from": "businessInfo.json",
+        "to": "businessInfo.json"
+      },
+      {
+        "from": "receiptFormat.json",
+        "to": "receiptFormat.json"
+      },
+      {
+        "from": "AddItem.html",
+        "to": "AddItem.html"
+      },
+      {
+        "from": "Miscellaneous.json",
+        "to": "Miscellaneous.json"
+      },
+      {
+        "from": "switches.json",
+        "to": "switches.json"
+      }
+    ],
+    "win": {
+      "icon": "assets/images/favicon.ico",
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Lassi Corner POS System",
+      "allowElevation": false,
+      "runAfterFinish": true,
+      "installerIcon": "assets/images/favicon.ico",
+      "uninstallerIcon": "assets/images/uninstall.ico"
+    }
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.4.2",
+    "cross-env": "^10.0.0",
+    "electron": "^25.9.8",
+    "electron-builder": "^26.0.12",
+    "electron-rebuild": "^3.2.9",
+    "electronmon": "^2.0.3",
+    "eslint": "^9.30.1",
+    "globals": "^16.3.0"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^11.10.0",
+    "chart.js": "^4.4.8",
+    "electron-store": "^8.0.2",
+    "escpos": "3.0.0-alpha.6",
+    "escpos-usb": "3.0.0-alpha.4",
+    "fs": "^0.0.1-security",
+    "open": "^10.1.2",
+    "sqlite3": "^5.1.7",
+    "usb": "^1.8.8",
+    "xlsx": "^0.18.5"
+  }
+}
