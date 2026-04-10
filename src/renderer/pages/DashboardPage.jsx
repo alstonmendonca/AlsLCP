@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import BillingPage from '@/pages/BillingPage';
 import { Button } from '@/components/ui/button';
 import HomePage from '@/pages/HomePage';
 import HistoryPage from '@/pages/HistoryPage';
@@ -6,9 +7,10 @@ import InventoryPage from '@/pages/InventoryPage';
 import MenuPage from '@/pages/MenuPage';
 
 export default function DashboardPage({ user, onLogout }) {
-  const [activeView, setActiveView] = useState('home');
+  const [activeView, setActiveView] = useState('billing');
 
   const navItems = useMemo(() => ([
+    { key: 'billing', label: 'Billing' },
     { key: 'home', label: 'Home' },
     { key: 'menu', label: 'Menu' },
     { key: 'history', label: 'History' },
@@ -16,6 +18,10 @@ export default function DashboardPage({ user, onLogout }) {
   ]), []);
 
   const renderContent = () => {
+    if (activeView === 'billing') {
+      return <BillingPage user={user} />;
+    }
+
     if (activeView === 'home') {
       return <HomePage />;
     }
