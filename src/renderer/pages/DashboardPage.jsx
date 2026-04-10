@@ -5,6 +5,7 @@ import HomePage from '@/pages/HomePage';
 import HistoryPage from '@/pages/HistoryPage';
 import InventoryPage from '@/pages/InventoryPage';
 import MenuPage from '@/pages/MenuPage';
+import ReportsPage from '@/pages/ReportsPage';
 import SettingsPage from '@/pages/SettingsPage';
 
 export default function DashboardPage({ user, onLogout }) {
@@ -16,6 +17,7 @@ export default function DashboardPage({ user, onLogout }) {
     { key: 'menu', label: 'Menu' },
     { key: 'history', label: 'History' },
     { key: 'inventory', label: 'Inventory' },
+    { key: 'reports', label: 'Reports' },
     { key: 'settings', label: 'Settings' },
   ]), []);
 
@@ -38,6 +40,10 @@ export default function DashboardPage({ user, onLogout }) {
 
     if (activeView === 'inventory') {
       return <InventoryPage />;
+    }
+
+    if (activeView === 'reports') {
+      return <ReportsPage />;
     }
 
     if (activeView === 'settings') {
