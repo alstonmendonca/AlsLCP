@@ -5,6 +5,7 @@ import HomePage from '@/pages/HomePage';
 import HistoryPage from '@/pages/HistoryPage';
 import InventoryPage from '@/pages/InventoryPage';
 import MenuPage from '@/pages/MenuPage';
+import SettingsPage from '@/pages/SettingsPage';
 
 export default function DashboardPage({ user, onLogout }) {
   const [activeView, setActiveView] = useState('billing');
@@ -15,6 +16,7 @@ export default function DashboardPage({ user, onLogout }) {
     { key: 'menu', label: 'Menu' },
     { key: 'history', label: 'History' },
     { key: 'inventory', label: 'Inventory' },
+    { key: 'settings', label: 'Settings' },
   ]), []);
 
   const renderContent = () => {
@@ -36,6 +38,10 @@ export default function DashboardPage({ user, onLogout }) {
 
     if (activeView === 'inventory') {
       return <InventoryPage />;
+    }
+
+    if (activeView === 'settings') {
+      return <SettingsPage user={user} onLogout={onLogout} />;
     }
 
     return (
