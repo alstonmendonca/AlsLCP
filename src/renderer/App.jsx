@@ -1,20 +1,83 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import DashboardPage from '@/pages/DashboardPage';
+import LoginPage from '@/pages/LoginPage';
+import ipcService from '@/services/ipcService';
 
 export default function App() {
-  const [message, setMessage] = useState('React + Vite + Electron loaded successfully!');
+  const [booting, setBooting] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
-    // Test IPC communication (when set up)
-    console.log('App mounted - ready for pages');
+    let mounted = true;
+
+    const restoreSession = async () => {
+      try {
+        if (!ipcService.isAvailable()) {
+          setError('Electron IPC is unavailable.');
+          return;
+        }
+
+        const sessionUser = await ipcService.invoke('get-session-user');
+        if (mounted && sessionUser) {
+          setUser(sessionUser);
+        }
+      } catch (sessionError) {
+        console.error('Failed to restore session:', sessionError);
+      } finally {
+        if (mounted) {
+          setBooting(false);
+        }
+      }
+    };
+
+    restoreSession();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  return (
-    <div className="w-screen h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-white mb-4">Lassi Corner POS</h1>
-        <p className="text-xl text-slate-300">{message}</p>
-        <p className="text-sm text-slate-500 mt-4">React + Vite + Electron</p>
+  const handleLogin = async ({ username, password }) => {
+    setLoading(true);
+    setError('');
+    try {
+      const loggedInUser = await ipcService.invoke('login', { username, password });
+      if (!loggedInUser) {
+        setError('Invalid username or password.');
+        return;
+      }
+      setUser(loggedInUser);
+    } catch (loginError) {
+      console.error('Login failed:', loginError);
+      setError('Unable to login right now.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await ipcService.invoke('logout');
+    } catch (logoutError) {
+      console.error('Logout failed:', logoutError);
+    }
+    setUser(null);
+    setError('');
+  };
+
+  if (booting) {
+    return (
+      <div className="h-screen w-screen grid place-items-center bg-slate-950 text-white">
+        <p className="text-sm tracking-[0.25em] uppercase">Loading session...</p>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (!user) {
+    return <LoginPage onLogin={handleLogin} loading={loading} error={error} />;
+  }
+
+  return <DashboardPage user={user} onLogout={handleLogout} />;
 }

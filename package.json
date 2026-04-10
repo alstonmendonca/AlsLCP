@@ -10,7 +10,7 @@
     "url": "https://github.com/alstonmendonca/AlsLCP.git"
   },
   "scripts": {
-    "dev": "vite & wait-on http://localhost:5173 && electron .",
+    "dev": "vite & wait-on http://localhost:5173 && cross-env ELECTRON_RENDERER_URL=http://localhost:5173 electron .",
     "dev:vite": "vite",
     "start": "electron .",
     "build": "vite build",
@@ -57,6 +57,7 @@
   "devDependencies": {
     "@electron/packager": "^18.4.2",
     "@vitejs/plugin-react": "^4.2.0",
+    "autoprefixer": "^10.4.20",
     "cross-env": "^10.0.0",
     "electron": "^25.9.8",
     "electron-builder": "^26.0.12",
@@ -65,7 +66,8 @@
     "globals": "^16.3.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.1",
-    "vite": "^5.0.8"
+    "vite": "^5.0.8",
+    "wait-on": "^7.2.0"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",

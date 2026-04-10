@@ -18,11 +18,23 @@ console.log(`Resources path: ${resourcesPath}`);
 
 // === React + Vite App Loading ===
 function getMainWindowUrl() {
-    if (app.isPackaged) {
-        return `file://${path.join(__dirname, '..', '..', 'dist', 'index.html')}`;
-    } else {
-        return 'http://localhost:5173';
+    // Explicit dev server URL (used by npm run dev)
+    const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+    if (devServerUrl) {
+        return devServerUrl;
     }
+
+    // Production build output (used by packaged app and local built app)
+    const distIndexPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'dist', 'index.html')
+        : path.join(basePath, 'dist', 'index.html');
+
+    if (fs.existsSync(distIndexPath)) {
+        return `file://${distIndexPath}`;
+    }
+
+    // Safe fallback so npm start still opens the app before React pages are migrated
+    return `file://${path.join(publicPath, 'login.html')}`;
 }
 
 const loginHtmlPath = path.join(publicPath, "login.html");
@@ -424,8 +436,8 @@ function setupIPC() {
         // Step 4: Wait for cleanup
         await new Promise(resolve => setTimeout(resolve, 300));
         
-        // Step 5: Load login page
-        await mainWindow.loadFile(loginHtmlPath);
+        // Step 5: Reload app entry (React dev/prod or legacy fallback)
+        await mainWindow.loadURL(getMainWindowUrl());
         
         // Step 6: Ensure window focus
         setTimeout(() => {
