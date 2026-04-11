@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import ipcService from '@/services/ipcService';
 
 export default function LoginPage({ onLogin, loading, error }) {
   const [username, setUsername] = useState('');
@@ -8,6 +9,10 @@ export default function LoginPage({ onLogin, loading, error }) {
   const submit = (event) => {
     event.preventDefault();
     onLogin({ username: username.trim(), password });
+  };
+
+  const handleExit = () => {
+    ipcService.send('exit-app');
   };
 
   return (
@@ -82,6 +87,10 @@ export default function LoginPage({ onLogin, loading, error }) {
 
           <Button type="submit" size="lg" className="w-full" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign in'}
+          </Button>
+
+          <Button type="button" variant="secondary" size="lg" className="w-full" onClick={handleExit} disabled={loading}>
+            Exit App
           </Button>
         </form>
       </div>

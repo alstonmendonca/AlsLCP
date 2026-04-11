@@ -178,7 +178,7 @@ export default function DashboardPage({ user, onLogout }) {
             Lassi Corner POS
           </p>
           <p className="text-[10px] mt-1" style={{ color: 'var(--text-on-dark)', opacity: 0.4 }}>
-            {user?.username ?? 'Staff'} / {user?.role ?? 'user'}
+            {user?.username ?? 'Staff'}
           </p>
         </div>
 

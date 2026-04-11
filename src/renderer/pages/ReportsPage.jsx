@@ -3,6 +3,13 @@ import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 import { SalesOverviewTable, CategorySalesTable, TopItemsTable, TopCategoriesTable } from '@/components/DataTable';
 
+function localDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -27,7 +34,7 @@ function ReportCard({ label, value }) {
 }
 
 export default function ReportsPage({ initialReport }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateString();
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [loading, setLoading] = useState(false);

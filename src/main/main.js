@@ -3,16 +3,20 @@ const path = require("path");
 const sqlite3 = require('sqlite3').verbose();
 const escpos = require("escpos");
 const fs = require('fs');
-const bcrypt = require('bcryptjs');
 escpos.USB = require("escpos-usb");
 let mainWindow;
-let splash;
-let userRole = null;
 let store; // Will be initialized after dynamic import
+function getLocalDateString(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 const projectRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..", "..");
 const basePath = projectRoot;
-const resourcesPath = path.join(basePath, "src", "resources");
-const publicPath = path.join(basePath, "src", "public");
+const resourcesPath = app.isPackaged
+    ? path.join(process.resourcesPath, "resources")
+    : path.resolve(__dirname, "..", "resources");
 console.log(`Base path: ${basePath}`);
 console.log(`Resources path: ${resourcesPath}`);
 
@@ -41,73 +45,36 @@ if (!gotSingleInstanceLock) {
     app.quit();
 }
 
-// Define user data paths
-const userDataPath = app.getPath('userData');
-const userDbPath = path.join(userDataPath, 'LC.db');
-const userReceiptFormatPath = path.join(userDataPath, 'receiptFormat.json');
-const userBusinessInfoPath = path.join(userDataPath, 'businessInfo.json');
-const userUiSettingsPath = path.join(userDataPath, 'uiSettings.json');
-
-// Function to copy resources to user data on first launch
-async function copyResourcesToUserData() {
-    // Use a marker file to track if first-time setup has been completed
-    const setupMarkerFile = path.join(userDataPath, '.setup_completed');
-    
-    if (!fs.existsSync(setupMarkerFile)) {
-        console.log('🔄 First launch detected, copying resources to user data...');
-        
-        // Create user data directory if it doesn't exist
-        if (!fs.existsSync(userDataPath)) {
-            fs.mkdirSync(userDataPath, { recursive: true });
-        }
-        
-        // List of files to copy from resources to user data
-        const filesToCopy = [
-            { source: path.join(resourcesPath, 'LC.db'), dest: userDbPath },
-            { source: path.join(resourcesPath, 'receiptFormat.json'), dest: userReceiptFormatPath },
-            { source: path.join(resourcesPath, 'businessInfo.json'), dest: userBusinessInfoPath },
-            { source: path.join(resourcesPath, 'uiSettings.json'), dest: userUiSettingsPath }
-        ];
-        
-        for (const file of filesToCopy) {
-            try {
-                if (fs.existsSync(file.source)) {
-                    // Create directory if it doesn't exist
-                    const destDir = path.dirname(file.dest);
-                    if (!fs.existsSync(destDir)) {
-                        fs.mkdirSync(destDir, { recursive: true });
-                    }
-                    
-                    // Copy file
-                    fs.copyFileSync(file.source, file.dest);
-                    console.log(`✅ Copied ${path.basename(file.source)} to user data`);
-                } else {
-                    console.warn(`⚠️ Source file not found: ${file.source}`);
-                }
-            } catch (error) {
-                console.error(`❌ Failed to copy ${path.basename(file.source)}:`, error.message);
-            }
-        }
-        
-        // Create marker file to indicate setup is complete
-        try {
-            fs.writeFileSync(setupMarkerFile, new Date().toISOString(), 'utf8');
-            console.log('✅ First-time setup completed');
-        } catch (error) {
-            console.error('❌ Failed to create setup marker file:', error.message);
-        }
-    } else {
-        console.log('📁 Using existing user data files');
-    }
+// Function to get the file path from the single shared resources directory
+function getFilePath(filename) {
+    return path.join(resourcesPath, filename);
 }
 
-// Function to get the appropriate file path (user data if exists, otherwise resources)
-function getFilePath(filename) {
-    const userDataFile = path.join(userDataPath, filename);
-    const resourceFile = path.join(basePath, filename);
-    
-    // Prefer user data file if it exists, otherwise fall back to resources
-    return fs.existsSync(userDataFile) ? userDataFile : resourceFile;
+function getUserDataFilePath(filename) {
+    return path.join(app.getPath('userData'), filename);
+}
+
+async function ensureDatabaseFileInUserData() {
+    const userDataDbPath = getUserDataFilePath('LC.db');
+
+    if (fs.existsSync(userDataDbPath)) {
+        return userDataDbPath;
+    }
+
+    const userDataDir = path.dirname(userDataDbPath);
+    if (!fs.existsSync(userDataDir)) {
+        await fs.promises.mkdir(userDataDir, { recursive: true });
+    }
+
+    const bundledSeedDbPath = path.join(resourcesPath, 'LC.db');
+    if (fs.existsSync(bundledSeedDbPath)) {
+        await fs.promises.copyFile(bundledSeedDbPath, userDataDbPath);
+        console.log(`📦 Seed database copied to userData: ${userDataDbPath}`);
+    } else {
+        console.warn(`⚠️ Seed database not found at ${bundledSeedDbPath}. A new database will be created at ${userDataDbPath}.`);
+    }
+
+    return userDataDbPath;
 }
 
 let db;
@@ -115,7 +82,7 @@ let db;
 async function initializeDatabaseConnection() {
     const maxAttempts = 5;
     const retryDelayMs = 500;
-    const dbPath = getFilePath('LC.db');
+    const dbPath = await ensureDatabaseFileInUserData();
 
     console.log(`📊 Using database at: ${dbPath}`);
 
@@ -190,7 +157,7 @@ async function initStore() {
 async function checkAndResetFoodItems() {
     await initStore(); // Ensure store is initialized
     const lastOpenedDate = store.get("lastOpenedDate");
-    const currentDate = new Date().toISOString().split("T")[0];
+    const currentDate = getLocalDateString();
 
     if (lastOpenedDate !== currentDate) {
         console.log("New day detected, resetting is_on column...");
@@ -229,9 +196,9 @@ function dbRunAsync(query, params = []) {
     });
 }
 
-async function ensureUserPasswordSchema() {
-    const cols = await new Promise((resolve, reject) => {
-        db.all("PRAGMA table_info(User)", [], (err, rows) => {
+function dbAllAsync(query, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(query, params, (err, rows) => {
             if (err) {
                 reject(err);
                 return;
@@ -239,60 +206,79 @@ async function ensureUserPasswordSchema() {
             resolve(rows || []);
         });
     });
-
-    const hasPasswordHash = cols.some((col) => col.name === 'password_hash');
-    if (!hasPasswordHash) {
-        await dbRunAsync("ALTER TABLE User ADD COLUMN password_hash TEXT");
-    }
-
-    const masterRow = await dbGetAsync("SELECT ItemValue FROM Miscellaneous WHERE ItemName = 'master_password'");
-    const defaultPassword = (masterRow && masterRow.ItemValue ? String(masterRow.ItemValue) : 'test123').trim();
-    const defaultHash = bcrypt.hashSync(defaultPassword, 12);
-
-    await dbRunAsync(
-        "UPDATE User SET password_hash = COALESCE(password_hash, ?) WHERE password_hash IS NULL OR TRIM(password_hash) = ''",
-        [defaultHash]
-    );
 }
 
-async function authenticateLocalUser(username, password) {
-    const user = await dbGetAsync(
-        "SELECT userid, uname, isadmin, username, email, password_hash FROM User WHERE username = ?",
-        [username]
-    );
+async function ensureUserTableSchema() {
+    const cols = await dbAllAsync("PRAGMA table_info(User)");
 
-    if (!user || !user.password_hash) {
-        return null;
+    const hasIsAdmin = cols.some((col) => col.name === 'isadmin');
+    const hasUsername = cols.some((col) => col.name === 'username');
+    const hasEmail = cols.some((col) => col.name === 'email');
+
+    // Avoid DROP/RENAME migrations because Orders and other tables reference User(userid).
+    if (!hasUsername) {
+        await dbRunAsync('ALTER TABLE User ADD COLUMN username TEXT');
     }
 
-    const isMatch = bcrypt.compareSync(password, user.password_hash);
-    if (!isMatch) {
-        return null;
+    if (!hasEmail) {
+        await dbRunAsync('ALTER TABLE User ADD COLUMN email TEXT');
+    }
+
+    if (hasIsAdmin || !hasUsername || !hasEmail) {
+        await dbRunAsync(`UPDATE User
+            SET username = COALESCE(
+                NULLIF(TRIM(username), ''),
+                COALESCE(NULLIF(TRIM(uname), ''), 'cashier')
+            )`);
+
+        await dbRunAsync(`UPDATE User
+            SET email = COALESCE(
+                NULLIF(TRIM(email), ''),
+                LOWER(REPLACE(
+                    COALESCE(NULLIF(TRIM(username), ''), COALESCE(NULLIF(TRIM(uname), ''), 'cashier')),
+                    ' ',
+                    ''
+                )) || '@local.user'
+            )`);
+    }
+}
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught exception:', err);
+});
+
+async function getOrCreateCashierUser(preferredUsername) {
+    const normalizedUsername = String(preferredUsername || 'cashier').trim().toLowerCase() || 'cashier';
+    const safeName = normalizedUsername;
+    const safeEmail = `${normalizedUsername.replace(/\s+/g, '')}@local.user`;
+
+    let user = await dbGetAsync(
+        "SELECT userid, uname, username, email FROM User WHERE username = ?",
+        [normalizedUsername]
+    );
+
+    if (!user) {
+        user = await dbGetAsync("SELECT userid, uname, username, email FROM User ORDER BY userid ASC LIMIT 1");
+    }
+
+    if (!user) {
+        await dbRunAsync(
+            "INSERT INTO User (uname, username, email) VALUES (?, ?, ?)",
+            [safeName, normalizedUsername, safeEmail]
+        );
+        user = await dbGetAsync("SELECT userid, uname, username, email FROM User ORDER BY userid DESC LIMIT 1");
     }
 
     return {
         name: user.uname,
-        role: user.isadmin === 1 ? 'admin' : 'staff',
         username: user.username,
         userid: user.userid,
         email: user.email
     };
-}
-
-// === Create splash window ===
-function createSplash() {
-  splash = new BrowserWindow({
-    width: 400,
-    height: 300,
-    frame: false,
-    transparent: true,
-    alwaysOnTop: true,
-    resizable: false,
-    movable: true,
-    show: true,
-  });
-
-    splash.loadFile(path.join(publicPath, "splash.html"));
 }
 
 // === Create main window ===
@@ -313,12 +299,16 @@ function createMainWindow() {
 
   Menu.setApplicationMenu(null);
 
-  // Set CSP header via session to suppress the security warning
+    const cspHeader = app.isPackaged
+        ? "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self';"
+        : "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' http://localhost:5173 ws://localhost:5173;";
+
+    // Set CSP header (strict in packaged builds, relaxed for local dev tooling)
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': ["default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';"],
+                'Content-Security-Policy': [cspHeader],
       },
     });
   });
@@ -366,14 +356,6 @@ function createMainWindow() {
     mainWindow.loadURL(getMainWindowUrl()).catch(console.error);
 
   mainWindow.once("ready-to-show", () => {
-      // Tell splash to fade out
-    if (splash && !splash.isDestroyed()) {
-        splash.webContents.executeJavaScript("window.fadeOutSplash()");
-        setTimeout(() => {
-        if (!splash.isDestroyed()) splash.close();
-        }, 700); // Allow time for fade before closing
-    }
-
     mainWindow.show();
 
         if (process.env.OPEN_DEVTOOLS === "1") {
@@ -384,8 +366,6 @@ function createMainWindow() {
 
 // === Do startup tasks (Express, DB, etc.) ===
 async function runStartupTasks() {
-  await copyResourcesToUserData();
-
   await initStore();
 }
 
@@ -393,17 +373,16 @@ async function runStartupTasks() {
 function setupIPC() {
   ipcMain.handle("login", async (event, { username, password }) => {
     try {
-            if (!username || !password) {
+                        if (!username || !password) {
         return null;
       }
 
-            const user = await authenticateLocalUser(username, password);
+                        const user = await getOrCreateCashierUser(username);
             if (!user) {
                 return null;
             }
 
             console.log("Login successful:", user.username);
-            userRole = user.role;
             await checkAndResetFoodItems();
             store.set("sessionUser", user);
             return user;
@@ -423,7 +402,6 @@ function setupIPC() {
       
       // Clear session data
       store.delete("sessionUser");
-      userRole = null;
       
       if (mainWindow && !mainWindow.isDestroyed()) {
         // Step 1: Stop all current operations
@@ -461,8 +439,8 @@ function setupIPC() {
       // Simple fallback: just clear session and reload login
       if (mainWindow && !mainWindow.isDestroyed()) {
         try {
-          console.log("� Using simple logout fallback...");
-          await mainWindow.loadFile(loginHtmlPath);
+                    console.log("Using simple logout fallback...");
+                    await mainWindow.loadURL(getMainWindowUrl());
         } catch (fallbackError) {
           console.error("❌ Fallback also failed:", fallbackError);
         }
@@ -472,202 +450,19 @@ function setupIPC() {
     }
   });
 
-  ipcMain.handle("get-user-role", () => userRole);
-
-  // Machine-specific hard reset handler for blank screen issues
-  ipcMain.handle("force-hard-reset", async () => {
-    console.log("🔥 Executing machine-specific hard reset...");
-    
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      try {
-        // Nuclear option: destroy and recreate renderer
-        const bounds = mainWindow.getBounds();
-        const isFullscreen = mainWindow.isFullScreen();
-        
-        // Close current window
-        mainWindow.destroy();
-        
-        // Wait and recreate
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        createMainWindow();
-        
-        if (mainWindow) {
-          mainWindow.setBounds(bounds);
-          if (isFullscreen) {
-            mainWindow.setFullScreen(true);
-          }
-        }
-        
-        return true;
-      } catch (error) {
-        console.error("❌ Hard reset failed:", error);
-        return false;
-      }
-    }
-    
-    return false;
-  });
-
   // IPC handler for editing user profile
-  ipcMain.handle("edit-user-profile", async (event, { userid, name, email, username }) => {
-    try {
-            if (!userid || !name || !email || !username) {
-                return { success: false, message: "User ID, name, email, and username are required" };
-            }
-
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                return { success: false, message: "Please provide a valid email address" };
-            }
-
-            const existingEmail = await dbGetAsync(
-                "SELECT userid FROM User WHERE email = ? AND userid != ?",
-                [email, userid]
-            );
-            if (existingEmail) {
-                return { success: false, message: "Email address is already in use by another user" };
-            }
-
-            const existingUsername = await dbGetAsync(
-                "SELECT userid FROM User WHERE username = ? AND userid != ?",
-                [username, userid]
-            );
-            if (existingUsername) {
-                return { success: false, message: "Username is already taken by another user" };
-            }
-
-            const result = await dbRunAsync(
-                "UPDATE User SET uname = ?, username = ?, email = ? WHERE userid = ?",
-                [name, username, email, userid]
-            );
-
-            if (result.changes === 0) {
-                return { success: false, message: "User not found" };
-            }
-
-            const sessionUser = store.get("sessionUser");
-            if (sessionUser && Number(sessionUser.userid) === Number(userid)) {
-                store.set("sessionUser", {
-                    ...sessionUser,
-                    name,
-                    username,
-                    email
-                });
-            }
-
-            return {
-                success: true,
-                message: "Profile updated successfully. Please login again.",
-                user: { userid, name, username, email }
-            };
-    } catch (err) {
-            console.error("Edit user profile error:", err.message);
-            return { success: false, message: "Failed to update profile." };
-    }
+  ipcMain.handle("edit-user-profile", async () => {
+    return { success: false, message: "User profile management is disabled for now." };
   });
 
   // IPC handler for changing password
-  ipcMain.handle("change-user-password", async (event, { userid, currentPassword, newPassword }) => {
-    try {
-            if (!userid || !currentPassword || !newPassword) {
-                return { success: false, message: "User ID, current password, and new password are required" };
-            }
-
-            if (String(newPassword).length < 6) {
-                return { success: false, message: "New password must be at least 6 characters long" };
-            }
-
-            const user = await dbGetAsync(
-                "SELECT password_hash FROM User WHERE userid = ?",
-                [userid]
-            );
-
-            if (!user || !user.password_hash) {
-                return { success: false, message: "User not found" };
-            }
-
-            const isCurrentPasswordValid = bcrypt.compareSync(currentPassword, user.password_hash);
-            if (!isCurrentPasswordValid) {
-                return { success: false, message: "Current password is incorrect" };
-            }
-
-            const newPasswordHash = bcrypt.hashSync(newPassword, 12);
-            await dbRunAsync(
-                "UPDATE User SET password_hash = ? WHERE userid = ?",
-                [newPasswordHash, userid]
-            );
-
-            return {
-                success: true,
-                message: "Password changed successfully. Please login again with your new password."
-            };
-    } catch (err) {
-            console.error("Change password error:", err.message);
-            return { success: false, message: "Failed to change password." };
-    }
+  ipcMain.handle("change-user-password", async () => {
+    return { success: false, message: "Password management is disabled for now." };
   });
 
   // IPC handler for adding new user
-  ipcMain.handle("add-new-user", async (event, { name, username, email, password, role, adminUserId }) => {
-    try {
-            if (!name || !username || !email || !password || !role || !adminUserId) {
-                return { success: false, message: 'Name, username, email, password, role, and admin user ID are required' };
-            }
-
-            const adminUser = await dbGetAsync("SELECT isadmin FROM User WHERE userid = ?", [adminUserId]);
-            if (!adminUser || adminUser.isadmin !== 1) {
-                return { success: false, message: 'Access denied. Admin privileges required.' };
-            }
-
-            if (password.length < 6) {
-                return { success: false, message: 'Password must be at least 6 characters long' };
-            }
-
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                return { success: false, message: 'Please provide a valid email address' };
-            }
-
-            if (!['admin', 'staff'].includes(role)) {
-                return { success: false, message: 'Role must be either "admin" or "staff"' };
-            }
-
-            const existingUsername = await dbGetAsync("SELECT userid FROM User WHERE username = ?", [username]);
-            if (existingUsername) {
-                return { success: false, message: 'Username is already taken' };
-            }
-
-            const existingEmail = await dbGetAsync("SELECT userid FROM User WHERE email = ?", [email]);
-            if (existingEmail) {
-                return { success: false, message: 'Email address is already in use' };
-            }
-
-            const lastUser = await dbGetAsync("SELECT userid FROM User ORDER BY userid DESC LIMIT 1");
-            const newUserId = lastUser ? Number(lastUser.userid) + 1 : 1;
-            const passwordHash = bcrypt.hashSync(password, 12);
-            const isadmin = role === 'admin' ? 1 : 0;
-
-            await dbRunAsync(
-                "INSERT INTO User (userid, uname, isadmin, username, email, password_hash) VALUES (?, ?, ?, ?, ?, ?)",
-                [newUserId, name, isadmin, username, email, passwordHash]
-            );
-
-            return {
-                success: true,
-                message: 'User created successfully!',
-                user: {
-                    userid: newUserId,
-                    name,
-                    username,
-                    email,
-                    role
-                }
-            };
-    } catch (err) {
-            console.error("Add user error:", err.message);
-            return { success: false, message: "Failed to create user." };
-    }
+  ipcMain.handle("add-new-user", async () => {
+    return { success: false, message: "Adding users is disabled for now." };
   });
 
   ipcMain.handle("get-printer-config", () => {
@@ -715,8 +510,6 @@ app.whenReady().then(async () => {
         return;
     }
 
-  createSplash();
-
   try {
     await runStartupTasks();
         await initializeDatabaseConnection();
@@ -724,7 +517,6 @@ app.whenReady().then(async () => {
     setupIPC();
   } catch (err) {
     console.error("Startup error:", err);
-    if (splash) splash.close();
   }
 });
 
@@ -793,36 +585,10 @@ ipcMain.on("get-item-summary", (event, { startDate, endDate }) => {
         event.reply("item-summary-response", { success: true, items: rows });
     });
 });
-ipcMain.on("get-todays-items", (event) => {
-    const query = `
-        SELECT 
-            Category.catname AS category,
-            FoodItem.fname AS item,
-            SUM(OrderDetails.quantity) AS quantity,
-            SUM(OrderDetails.quantity * FoodItem.cost) AS revenue
-        FROM Orders
-        JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        JOIN Category ON FoodItem.category = Category.catid
-        WHERE Orders.date = date('now', 'localtime')
-        GROUP BY Category.catname, FoodItem.fname
-        ORDER BY Category.catname ASC
-    `;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching today's items:", err);
-            event.reply("todays-items-response", { success: false, items: [] });
-            return;
-        }
-        event.reply("todays-items-response", { success: true, items: rows });
-    });
-});
-
 // IPC handler to get today's revenue
 ipcMain.handle('get-todays-revenue', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `SELECT SUM(price) AS totalRevenue FROM Orders WHERE date LIKE ?`;
         
         db.get(query, [`${today}%`], (err, row) => {
@@ -839,7 +605,7 @@ ipcMain.handle('get-todays-revenue', (event) => {
 // IPC handler to get today's sales count
 ipcMain.handle('get-todays-sales', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `SELECT COUNT(*) AS totalSales FROM Orders WHERE date LIKE ?`;
         
         db.get(query, [`${today}%`], (err, row) => {
@@ -856,7 +622,7 @@ ipcMain.handle('get-todays-sales', (event) => {
 // IPC handler to get today's tax amount
 ipcMain.handle('get-todays-tax', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `SELECT SUM(tax) AS totalTax FROM Orders WHERE date LIKE ?`;
         
         db.get(query, [`${today}%`], (err, row) => {
@@ -873,7 +639,7 @@ ipcMain.handle('get-todays-tax', (event) => {
 // IPC handler to get today's discounted orders count
 ipcMain.handle('get-todays-discounted-orders', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `SELECT COUNT(*) AS discountedCount FROM DiscountedOrders WHERE billno IN (SELECT billno FROM Orders WHERE date LIKE ?)`;
         
         db.get(query, [`${today}%`], (err, row) => {
@@ -890,7 +656,7 @@ ipcMain.handle('get-todays-discounted-orders', (event) => {
 // IPC handler to get today's deleted orders count
 ipcMain.handle('get-todays-deleted-orders', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `SELECT COUNT(*) AS deletedCount FROM DeletedOrders WHERE date LIKE ?`;
         
         db.get(query, [`${today}%`], (err, row) => {
@@ -907,10 +673,10 @@ ipcMain.handle('get-todays-deleted-orders', (event) => {
 // IPC handler to get yesterday's revenue
 ipcMain.handle('get-yesterdays-revenue', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayDate = yesterday.toISOString().split('T')[0]; // Get yesterday's date in YYYY-MM-DD format
+        const yesterdayDate = getLocalDateString(yesterday);
         const query = `SELECT SUM(price) AS totalRevenue FROM Orders WHERE date LIKE ?`;
         
         db.get(query, [`${yesterdayDate}%`], (err, row) => {
@@ -927,7 +693,7 @@ ipcMain.handle('get-yesterdays-revenue', (event) => {
 // IPC handler to get today's most sold items
 ipcMain.handle('get-most-sold-items', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `
             SELECT f.fname, SUM(od.quantity) AS totalQuantity
             FROM OrderDetails od
@@ -954,7 +720,7 @@ ipcMain.handle('get-most-sold-items', (event) => {
 // IPC handler to get today's most sold categories
 ipcMain.handle('get-most-sold-categories', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `
             SELECT c.catname, SUM(od.quantity) AS totalQuantity
             FROM OrderDetails od
@@ -982,7 +748,7 @@ ipcMain.handle('get-most-sold-categories', (event) => {
 // IPC handler to get today's highest revenue items
 ipcMain.handle('get-highest-revenue-items', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `
             SELECT f.fname, SUM(od.quantity * f.cost) AS totalRevenue
             FROM OrderDetails od
@@ -1009,7 +775,7 @@ ipcMain.handle('get-highest-revenue-items', (event) => {
 // IPC handler to get today's highest revenue category
 ipcMain.handle('get-highest-revenue-category', (event) => {
     return new Promise((resolve, reject) => {
-        const today = new Date().toISOString().split('T')[0]; // Get today's date in YYYY-MM-DD format
+        const today = getLocalDateString();
         const query = `
             SELECT c.catname, SUM(od.quantity * f.cost) AS totalRevenue
             FROM OrderDetails od
@@ -1031,20 +797,6 @@ ipcMain.handle('get-highest-revenue-category', (event) => {
                 resolve(categories); // Return the list of highest revenue categories
             }
         });
-    });
-});
-
-// Fetch categories for Category Wise Sales
-ipcMain.on("get-category-wise-sales-categories", (event) => {
-    const query = `SELECT catid, catname FROM Category WHERE active = 1`;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching categories for Category Wise Sales:", err);
-            event.reply("category-wise-sales-categories-response", { success: false, categories: [] });
-            return;
-        }
-        event.reply("category-wise-sales-categories-response", { success: true, categories: rows });
     });
 });
 
@@ -1285,7 +1037,7 @@ ipcMain.on('get-seven-day-sales', (event) => {
     startDate.setDate(endDate.getDate() - 6); // 7 days total
     
     // Format dates as YYYY-MM-DD
-    const formatDate = (date) => date.toISOString().split('T')[0];
+    const formatDate = (date) => getLocalDateString(date);
     const startDateStr = formatDate(startDate);
     const endDateStr = formatDate(endDate);
     
@@ -1468,271 +1220,7 @@ ipcMain.on('get-tax-on-items', (event, { startDate, endDate }) => {
 });
 //----------------------------------------------ANALYTICS ENDS HERE--------------------------------------------------------------
 
-//------------------------------ CATEGORIES STARTS HERE --------------------------------
-// Listen for request to get categories
-ipcMain.on("get-categories-list", (event) => {
-    const query = "SELECT catid, catname, active FROM Category";
-    
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching categories:", err.message);
-            event.reply("categories-list-response", { success: false, categories: [] });
-            return;
-        }
-
-        event.reply("categories-list-response", { success: true, categories: rows });
-    });
-});
-
-ipcMain.on("delete-category", (event, categoryId) => {
-    const query = "DELETE FROM Category WHERE catid = ?";
-    
-    db.run(query, [categoryId], function (err) {
-        if (err) {
-            console.error("Error deleting category:", err.message);
-            return;
-        }
-
-        console.log(`Category ID ${categoryId} deleted successfully.`);
-        event.reply("category-deleted"); // Notify renderer to refresh UI
-    });
-});
-
-// Handle Adding Category
-ipcMain.on("add-category", (event, categoryData) => {
-    const { catname, active } = categoryData;
-
-    // Insert category into the database
-    const sql = "INSERT INTO Category (catname, active) VALUES (?, ?)";
-    db.run(sql, [catname, active], function (err) {
-        if (err) {
-            console.error("Error adding category:", err.message);
-            return;
-        }
-
-        // Notify the renderer process that the category has been added
-        event.sender.send("category-added");
-
-        // Optionally, refresh the categories list in the main window
-        if (mainWindow) {
-            mainWindow.webContents.send("category-updated");
-        }
-    });
-});
-
-// Handle Category Update
-ipcMain.on("update-category", (event, updatedData) => {
-    const query = "UPDATE Category SET catname = ?, active = ? WHERE catid = ?";
-
-    db.run(query, [updatedData.catname, updatedData.active, updatedData.catid], function (err) {
-        if (err) {
-            console.error("Error updating category:", err.message);
-            return;
-        }
-
-        console.log(`Category ID ${updatedData.catid} updated successfully.`);
-        event.sender.send("category-updated"); // Notify edit window
-    });
-});
-
-ipcMain.on("refresh-categories", (event) => {
-    if (mainWindow) {
-        mainWindow.webContents.send("category-updated");
-    }
-    
-});
-//----------------------------------------------------BILLING----------------------------------------------------------
 let isPrinting = false;
-ipcMain.on("print-bill", (event, { billItems, totalAmount, kot, orderId }) => {
-    if (isPrinting) {
-        event.sender.send('print-error', 'Printer is busy');
-        return;
-    }
-    isPrinting = true;
-
-    try {
-        const config = store.get('printerConfig', {
-            vendorId: '0x0525',
-            productId: '0xA700'
-        });
-
-        const vendorId = parseInt(config.vendorId, 16);
-        const productId = parseInt(config.productId, 16);
-
-        if (isNaN(vendorId) || isNaN(productId)) {
-            throw new Error('Invalid printer configuration - please check Vendor/Product IDs');
-        }
-
-        const device = new escpos.USB(vendorId, productId);
-        const printer = new escpos.Printer(device, { encoding: 'UTF-8' });
-
-        device.open((err) => {
-            if (err) {
-                event.sender.send('print-error', `Printer connection failed: ${err.message}`);
-                return;
-            }
-
-            const commands = generateHardcodedReceipt(billItems, totalAmount, kot, orderId);
-            
-            printer
-                .raw(Buffer.from(commands, 'utf8'))
-                .close((err) => {
-                    if (err) {
-                        event.sender.send('print-error', `Print failed: ${err.message}`);
-                    } else {
-                        // Return kot and orderId for saving
-                        event.sender.send('print-success-with-data', { kot, orderId });
-                    }
-                });
-        });
-    } catch (error) {
-        event.sender.send('print-error', `System error: ${error.message}`);
-    } finally {
-        isPrinting = false;
-    }
-});
-
-// Improve the rollback function
-ipcMain.on("rollback-order", (event, orderId) => {
-    db.serialize(() => {
-        // Use transactions for atomicity
-        db.run("BEGIN TRANSACTION");
-        
-        db.run("DELETE FROM OrderDetails WHERE orderid = ?", [orderId], function(err) {
-            if (err) {
-                console.error("Error deleting order details:", err);
-                db.run("ROLLBACK");
-                return;
-            }
-            
-            db.run("DELETE FROM DiscountedOrders WHERE billno = ?", [orderId], function(err) {
-                if (err) {
-                    console.error("Error deleting discount:", err);
-                    db.run("ROLLBACK");
-                    return;
-                }
-                
-                db.run("DELETE FROM Orders WHERE billno = ?", [orderId], function(err) {
-                    if (err) {
-                        console.error("Error deleting order:", err);
-                        db.run("ROLLBACK");
-                    } else {
-                        db.run("COMMIT");
-                        console.log(`Order ${orderId} successfully rolled back`);
-                    }
-                });
-            });
-        });
-    });
-});
-
-ipcMain.handle("test-printer-connection", async (event) => {
-    if (isPrinting) {
-        throw new Error('Printer is busy');
-    }
-    isPrinting = true;
-
-    try {
-        const config = store.get('printerConfig', {
-            vendorId: '0x0525',
-            productId: '0xA700'
-        });
-
-        const vendorId = parseInt(config.vendorId, 16);
-        const productId = parseInt(config.productId, 16);
-
-        if (isNaN(vendorId) || isNaN(productId)) {
-            throw new Error('Invalid printer configuration');
-        }
-
-        const device = new escpos.USB(vendorId, productId);
-        
-        return new Promise((resolve, reject) => {
-            device.open((err) => {
-                isPrinting = false;
-                if (err) {
-                    reject(new Error(`Printer connection failed: ${err.message}`));
-                } else {
-                    device.close((closeErr) => {
-                        if (closeErr) {
-                            reject(new Error(`Printer test failed: ${closeErr.message}`));
-                        } else {
-                            resolve(true);
-                        }
-                    });
-                }
-            });
-        });
-    } catch (error) {
-        isPrinting = false;
-        throw error;
-    }
-});
-
-function generateHardcodedReceipt(items, totalAmount, kot, orderId) {
-    const template = loadReceiptTemplate({ // Change from store.get to loadReceiptTemplate
-        title: 'THE LASSI CORNER',
-        subtitle: 'SJEC, VAMANJOOR',
-        footer: 'Thank you for visiting!',
-        itemHeader: 'ITEM',
-        qtyHeader: 'QTY',
-        priceHeader: 'PRICE',
-        totalText: 'TOTAL: Rs.',
-        kotItemHeader: 'ITEM',
-        kotQtyHeader: 'QTY'
-    });
-
-    // Adjusted for 80mm paper (~42-48 chars per line)
-    const customerItemWidth = 27;
-    const itemWidth = 35;  // More space for food names
-    const qtyWidth = 8;    // Right-aligned
-    const kotQtyWidth = 5;
-    const priceWidth = 5;  // Right-aligned (for decimals)
-    
-    // Format items with better spacing
-    const formattedItems = items.map(item => 
-        `${item.name.substring(0, itemWidth).padEnd(customerItemWidth)}` +
-        `${item.quantity.toString().padEnd(qtyWidth)}` +
-        `${item.price.toFixed(2).padStart(priceWidth)}`
-    ).join('\n');
-    
-    const kotItems = items.map(item => 
-        `${item.name.substring(0, itemWidth).padEnd(itemWidth)}` +
-        `${item.quantity.toString().padStart(kotQtyWidth)}`
-    ).join('\n');
-    
-    // Customer receipt (optimized for 80mm)
-    const customerReceipt = `\x1B\x40\x1B\x61\x01\x1D\x21\x11${template.title}
-\x1D\x21\x00\x1B\x61\x01${template.subtitle}
-\x1B\x61\x01\x1D\x21\x11\x1B\x45\x01
-TOKEN: ${kot}
-\x1D\x21\x00\x1B\x45\x00\x1B\x61\x00
-Date:${new Date().toLocaleString()}
-Bill #: ${orderId}
-${'-'.repeat(42)}
-\x1B\x45\x01ITEM                      QTY      PRICE 
-\x1B\x45\x00${formattedItems}
-${'-'.repeat(42)}
-\x1B\x45\x01                        TOTAL: Rs.${totalAmount.toFixed(2).padStart(2)}
-\x1B\x45\x00\x1B\x61\x01${template.footer}
-\x1D\x56\x41\x00`;  // Partial cut
-
-// KOT receipt (larger KOT #)
-const kotReceipt = `\x1B\x61\x01\x1D\x21\x11\x1B\x45\x01\x1B\x2D\x00${kot}
-\x1B\x33\x03
-\x1D\x21\x00\x1B\x45\x00\x1B\x2D\x00
-Time: ${new Date().toLocaleTimeString()}\x1B\x61\x00\x1B\x45\x01\x1B\x2D\x00               Rs ${totalAmount}
-------------------------------------------
-ITEM                                   QTY
-------------------------------------------
-\x1B\x45\x00\x1B\x2D\x00
-${kotItems}
-\x1D\x56\x41\x00`;  // Partial cut
-
-return  customerReceipt+kotReceipt;
-}
-
-// Add this to main.js
 ipcMain.on("print-kot-only", (event, { billItems, totalAmount, kot, orderId }) => {
     if (isPrinting) {
         event.sender.send('print-error', 'Printer is busy');
@@ -1843,7 +1331,6 @@ function saveReceiptTemplate(template) {
   }
 }
 
-// Add this to main.js - print bill only handler
 ipcMain.on("print-bill-only", (event, { billItems, totalAmount, kot, orderId, dateTime }) => {
     if (isPrinting) {
         event.sender.send('print-error', 'Printer is busy');
@@ -2373,85 +1860,6 @@ ipcMain.on("hold-bill", async (event, orderData) => {
         event.sender.send("bill-error", { error: error.message });
     }
 });
-// SAVE TO EXISTING ORDER
-// Fetch Today's Orders
-ipcMain.on("get-todays-orders-for-save-to-orders", (event) => {
-    
-    const query = `
-        SELECT 
-            Orders.*, 
-            User.uname AS cashier_name, 
-            GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
-        FROM Orders
-        JOIN User ON Orders.cashier = User.userid
-        JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        WHERE Orders.date = date('now', 'localtime')  -- Ensure correct format match
-        GROUP BY Orders.billno
-        ORDER BY Orders.billno DESC
-    `;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching today's orders:", err);
-            event.reply("todays-orders-response-for-save-to-orders", { success: false, orders: [] });
-            return;
-        }
-        event.reply("todays-orders-response-for-save-to-orders", { success: true, orders: rows });
-    });
-});
-// Add items to an existing order
-ipcMain.on("add-to-existing-order", async (event, data) => {
-    const { orderId, orderItems } = data;
-
-    try {
-        let totalPrice = 0, totalSGST = 0, totalCGST = 0, totalTax = 0;
-
-        // Fetch food item data and calculate totals
-        for (const { foodId, quantity } of orderItems) {
-            const row = await new Promise((resolve, reject) => {
-                db.get(`SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?`, [foodId], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-
-            let itemTotal = row.cost * quantity;
-            totalPrice += itemTotal;
-            totalSGST += (itemTotal * row.sgst) / 100;
-            totalCGST += (itemTotal * row.cgst) / 100;
-            totalTax += (itemTotal * row.tax) / 100;
-
-            // Insert into OrderDetails if it doesn't exist, otherwise update quantity
-            db.run(
-                `INSERT INTO OrderDetails (orderid, foodid, quantity) 
-                 VALUES (?, ?, ?) 
-                 ON CONFLICT(orderid, foodid) 
-                 DO UPDATE SET quantity = quantity + ?`,
-                [orderId, foodId, quantity, quantity]
-            );
-        }
-
-        // Update the order totals
-        db.run(
-            `UPDATE Orders SET 
-             price = price + ?, 
-             sgst = sgst + ?, 
-             cgst = cgst + ?, 
-             tax = tax + ? 
-             WHERE billno = ?`,
-            [totalPrice.toFixed(2), totalSGST.toFixed(2), totalCGST.toFixed(2), totalTax.toFixed(2), orderId]
-        );
-
-        //console.log(`Order ${orderId} updated successfully with new items.`);
-        event.sender.send("order-updated", { success: true, orderId });
-
-    } catch (error) {
-        console.error("Error updating order:", error.message);
-        event.sender.send("order-update-error", { error: error.message });
-    }
-});
-
 // Fetch top selling items for a specific date range
 ipcMain.on("get-top-selling-items", async (event, { startDate, endDate }) => {
     const query = `
@@ -2642,40 +2050,6 @@ ipcMain.on("get-categories-event", (event) => {
     });
 });
 
-ipcMain.on("get-category-wise", (event, { startDate, endDate, category }) => {
-    const query = `
-        SELECT 
-            Orders.*, 
-            User.uname AS cashier_name, 
-            GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
-        FROM Orders
-        JOIN User ON Orders.cashier = User.userid
-        JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        WHERE DATE(TRIM(Orders.date)) BETWEEN DATE(?) AND DATE(?)
-        AND Orders.billno IN (
-            SELECT DISTINCT OrderDetails.orderid 
-            FROM OrderDetails
-            JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-            WHERE FoodItem.category = ?
-        )
-        GROUP BY Orders.billno
-        ORDER BY DATE(TRIM(Orders.date)) DESC
-    `;
-
-    db.all(query, [startDate, endDate, category], (err, rows) => {
-        if (err) {
-            console.error("Error fetching order history:", err);
-            event.reply("category-wise-response", { success: false, orders: [] });
-            return;
-        }
-        event.reply("category-wise-response", { success: true, orders: rows });
-    });
-});
-
-
-
-
 // Listens for deleted order requests, retrieves the deleted orders from the DeletedOrders table and sends records back in response
 ipcMain.on("get-deleted-orders", (event, { startDate, endDate }) => {
 
@@ -2700,14 +2074,6 @@ ipcMain.on("get-deleted-orders", (event, { startDate, endDate }) => {
             return;
         }
         event.reply("deleted-orders-response", { success: true, orders: rows });
-    });
-});
-
-ipcMain.on("show-excel-export-message", (event, options) => {
-    dialog.showMessageBox({
-        type: options.type || "info",
-        title: options.title || "Notification",
-        message: options.message || "Operation completed.",
     });
 });
 
@@ -2837,17 +2203,6 @@ ipcMain.on("delete-customer", (event, { customerId }) => {
     });
 });
 
-// Handle Edit Customer
-ipcMain.on("edit-customer", (event, { customerId }) => {
-    db.get("SELECT * FROM Customer WHERE cid = ?", [customerId], (err, customer) => {
-        if (err) {
-            console.error("Error fetching customer:", err);
-            return;
-        }
-        event.reply("edit-customer-data", customer);
-    });
-});
-
 // Handle Update Customer
 ipcMain.on("update-customer", (event, updatedCustomer) => {
     const { cid, cname, phone, address } = updatedCustomer;
@@ -2864,20 +2219,6 @@ ipcMain.on("update-customer", (event, updatedCustomer) => {
         }
     );
 });
-// Clear customer Data
-ipcMain.on("clear-customer-data", (event) => {
-    const deleteDiscountedOrdersQuery = `DELETE FROM Customer`;
-
-    db.run(deleteDiscountedOrdersQuery, [], (err) => {
-        if (err) {
-            console.error("Error clearing customer data:", err);
-            event.reply("clear-customer-data-response", { success: false });
-            return;
-        }
-        event.reply("clear-customer-data-response", { success: true });
-    });
-});
-
 // Fetch order details for a specific bill number
 ipcMain.on("get-order-details", (event, billno) => {
     const query = `
@@ -2898,130 +2239,6 @@ ipcMain.on("get-order-details", (event, billno) => {
             return;
         }
         event.reply("order-details-response", { food_items: rows });
-    });
-});
-
-//ItemHistory
-ipcMain.on("get-food-items-for-item-history", (event, { categoryId }) => {
-    const query = `SELECT fid, fname FROM FoodItem WHERE category = ? AND active = 1`;
-    db.all(query, [categoryId], (err, rows) => {
-        if (err) {
-            console.error("Error fetching food items:", err);
-            event.reply("food-items-response-for-item-history", { success: false, foodItems: [] });
-            return;
-        }
-        event.reply("food-items-response-for-item-history", { success: true, foodItems: rows });
-    });
-});
-
-// Item History
-ipcMain.on("get-item-history", (event, { startDate, endDate, foodItem }) => {
-    const query = `
-        SELECT 
-            Orders.billno, 
-            Orders.date, 
-            User.uname AS cashier_name,  
-            Orders.kot, 
-            Orders.price, 
-            Orders.sgst,
-            Orders.cgst,
-            Orders.tax,
-            GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
-        FROM Orders
-        JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        JOIN User ON Orders.cashier = User.userid  
-        WHERE FoodItem.fid = ? AND date(Orders.date) BETWEEN date(?) AND date(?)
-        GROUP BY Orders.billno
-        ORDER BY Orders.date DESC;
-    `;
-
-    db.all(query, [foodItem, startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error("Error fetching item history:", err);
-            event.reply("item-history-response", { success: false, orders: [] });
-            return;
-        }
-        event.reply("item-history-response", { success: true, orders: rows });
-    });
-});
-
-ipcMain.on("update-order", (event, { billno, orderItems }) => {
-    // Delete existing order details for the bill
-    const deleteQuery = `DELETE FROM OrderDetails WHERE orderid = ?`;
-    db.run(deleteQuery, [billno], (err) => {
-        if (err) {
-            console.error("Error deleting existing order details:", err);
-            event.reply("update-order-response", { success: false });
-            return;
-        }
-
-        // Insert the updated order details
-        const insertQuery = `INSERT INTO OrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)`;
-        const statements = orderItems.map(item => {
-            return new Promise((resolve, reject) => {
-                db.run(insertQuery, [billno, item.foodId, item.quantity], (err) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                });
-            });
-        });
-
-        // Execute all insert statements
-        Promise.all(statements)
-            .then(() => {
-                console.log("Order items updated successfully.");
-
-                // Recalculate the total price, SGST, CGST, and tax
-                const totalQuery = `
-                    SELECT 
-                        SUM(f.cost * od.quantity) AS total_price,
-                        SUM(f.sgst * od.quantity) AS total_sgst,
-                        SUM(f.cgst * od.quantity) AS total_cgst
-                    FROM OrderDetails od
-                    JOIN FoodItem f ON od.foodid = f.fid
-                    WHERE od.orderid = ?;
-                `;
-
-                db.get(totalQuery, [billno], (err, row) => {
-                    if (err) {
-                        console.error("Error calculating total price:", err);
-                        event.reply("update-order-response", { success: false });
-                        return;
-                    }
-
-                    if (row) {
-                        const { total_price, total_sgst, total_cgst } = row;
-                        const total_tax = total_sgst + total_cgst;
-
-                        // Update the Orders table with the new price, sgst, cgst, and tax
-                        const updateOrderQuery = `
-                            UPDATE Orders
-                            SET price = ?, sgst = ?, cgst = ?, tax = ?
-                            WHERE billno = ?;
-                        `;
-                        db.run(updateOrderQuery, [total_price, total_sgst, total_cgst, total_tax, billno], (err) => {
-                            if (err) {
-                                console.error("Error updating order totals:", err);
-                                event.reply("update-order-response", { success: false });
-                            } else {
-                                console.log("Order totals updated successfully.");
-                                event.reply("update-order-response", { success: true });
-
-                                // Refresh the "Today's Orders" section
-                                event.sender.send("refresh-order-history");
-                            }
-                        });
-                    }
-                });
-            })
-            .catch((err) => {
-                console.error("Error updating order details:", err);
-                event.reply("update-order-response", { success: false });
-            });
     });
 });
 
@@ -3125,145 +2342,12 @@ ipcMain.on('get-year-wise-data', (event) => {
         }
     });
 });
-//---------------------------------------HISTORY TAB ENDS HERE--------------------------------------------
-
-//---------------------------------------SETTINGS TAB STARTS HERE--------------------------------------------
-
-ipcMain.on("get-users", (event) => {
-    const query = `SELECT * FROM User`;  
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Database Error:", err);
-            event.reply("users-response", []);
-            return;
-        }
-        event.reply("users-response", rows);
-    });
-});
-
-// Handle user updates
-ipcMain.on("update-user", (event, data) => {
-    const { userid, uname, password } = data;
-    const query = `UPDATE User SET uname = ?, password = ? WHERE userid = ?`;
-
-    db.run(query, [uname, password, userid], function (err) {
-        if (err) {
-            console.error("Update Error:", err);
-            event.reply("user-update-failed");
-            return;
-        }
-        console.log(`User ${userid} updated successfully.`);
-        event.reply("user-updated"); // Notify renderer process to refresh the page
-    });
-});
-
-// Get current user
-ipcMain.on('get-current-user', (event) => {
-    event.reply('current-user-response', currentUser);
-});
-
-// Switch user
-ipcMain.on("switch-user", (event, userId) => {
-    const query = `SELECT * FROM User WHERE userid = ?`;
-    db.get(query, [userId], (err, user) => {
-        if (err) {
-            console.error("Database Error:", err);
-            event.reply("user-switch-failed", { error: "Database error" });
-            return;
-        }
-        if (user) {
-            currentUser = user;
-            event.reply("user-switched", user);
-        } else {
-            event.reply("user-switch-failed", { error: "User not found" });
-        }
-    });
-});
-
-// Handle request to add a new user
-ipcMain.on("add-user", (event, { uname, password, isadmin }) => {
-    const query = `INSERT INTO User (uname, password, isadmin) VALUES (?, ?, ?)`;
-
-    db.run(query, [uname, password, isadmin], function (err) {
-        if (err) {
-            console.error("Error adding user:", err.message);
-            event.reply("user-add-failed", { error: err.message });
-        } else {
-            console.log(`User added successfully with ID ${this.lastID}`);
-            event.reply("user-added"); // Notify the frontend to refresh the user list
-
-            // **Broadcast event to refresh users in the main window**
-            mainWindow.webContents.send("get-users"); 
-        }
-    });
-});
-
-// Handle request to remove users
-ipcMain.on("remove-users", (event, userIds) => {
-    if (userIds.length === 0) return;
-
-    const placeholders = userIds.map(() => "?").join(",");
-    const query = `DELETE FROM User WHERE userid IN (${placeholders})`;
-
-    db.run(query, userIds, function (err) {
-        if (err) {
-            console.error("Error deleting users:", err.message);
-            return;
-        }
-        console.log(`${this.changes} users deleted successfully.`);
-
-        // Notify the renderer process to refresh the list
-        event.reply("users-deleted");
-        mainWindow.webContents.send("get-users"); // Refresh user list in main UI
-    });
-});
-
-// Printer Configuration
 const Store = require('electron-store');
-const printerStore = new Store({ name: 'printer-config' });
-
-// Get available printers
-ipcMain.handle('get-available-printers', async () => {
-    const printers = await mainWindow.webContents.getPrintersAsync();
-    return printers.map(printer => ({
-        name: printer.name,
-        displayName: printer.displayName,
-        status: printer.status === 0 ? 'Ready' : 'Offline'
-    }));
-});
-
-// Get saved printer
-ipcMain.handle('get-saved-printer', () => {
-    return printerStore.get('selectedPrinter', null);
-});
-
-// Save printer config
-ipcMain.handle('save-printer-configuration', (event, printerName) => {
-    printerStore.set('selectedPrinter', printerName);
-    return true;
-});
 
 //----------------------------------------------SETTINGS TAB ENDS HERE--------------------------------------------
 
 // Store for category order
 let categoryOrderStore = new Store({ name: 'category-order' });
-
-// Get category order
-ipcMain.handle("get-category-order", async () => {
-    return categoryOrderStore.get('order', []);
-});
-
-// Save category order
-ipcMain.handle("save-category-order", async (event, order) => {
-    categoryOrderStore.set('order', order);
-    return true;
-});
-
-// Reset category order
-ipcMain.handle("reset-category-order", async () => {
-    categoryOrderStore.delete('order');
-    return true;
-});
 
 // Modified get-categories handler to respect custom order
 ipcMain.handle("get-categories", async () => {
@@ -3746,7 +2830,7 @@ ipcMain.handle('load-ui-settings', async () => {
 
 ipcMain.handle('save-ui-settings', async (event, settings) => {
     try {
-        const dataPath = path.join(userDataPath, 'uiSettings.json');
+        const dataPath = getFilePath('uiSettings.json');
         const nextSettings = {
             showHoldBill: settings?.showHoldBill !== false,
         };
@@ -3770,7 +2854,7 @@ ipcMain.on('backup-database-local', async (event) => {
         const { dialog } = require('electron');
         const result = await dialog.showSaveDialog(mainWindow, {
             title: 'Save Database Backup',
-            defaultPath: `LC_backup_${new Date().toISOString().split('T')[0]}.db`,
+            defaultPath: `LC_backup_${getLocalDateString()}.db`,
             filters: [
                 { name: 'Database Files', extensions: ['db'] },
                 { name: 'All Files', extensions: ['*'] }
@@ -3840,10 +2924,8 @@ function initializeSchema() {
       db.run(`CREATE TABLE IF NOT EXISTS User (
         userid INTEGER PRIMARY KEY AUTOINCREMENT,
         uname TEXT NOT NULL,
-        isadmin INTEGER NOT NULL,
         username TEXT NOT NULL,
-                email TEXT NOT NULL,
-                password_hash TEXT
+                                email TEXT NOT NULL
       )`);
   
             db.run(`CREATE TABLE IF NOT EXISTS FoodItem (
@@ -3936,24 +3018,13 @@ function initializeSchema() {
             db.run(`DROP TABLE IF EXISTS OnlineOrders`);
                         db.run(`DROP TABLE IF EXISTS Inventory`);
 
-      db.run(`CREATE TABLE IF NOT EXISTS "Miscellaneous" (
-        "MiscNo"	INTEGER NOT NULL,
-        "ItemName"	TEXT NOT NULL,
-        "ItemValue"	TEXT NOT NULL,
-        PRIMARY KEY("MiscNo" AUTOINCREMENT)
-    )`);
-        // Only insert master_password if it does not exist
-        db.get(`SELECT MiscNo FROM Miscellaneous WHERE ItemName = 'master_password'`, [], (err, row) => {
-          if (err) {
-            console.error("Error checking for master_password:", err);
-          } else if (!row) {
-            db.run(`INSERT INTO Miscellaneous (ItemName, ItemValue) VALUES ('master_password', 'test123')`);
-          }
+                        db.run(`DROP TABLE IF EXISTS Miscellaneous`);
 
-                    ensureUserPasswordSchema().catch((schemaErr) => {
-                        console.error("Error preparing local user password schema:", schemaErr);
-                    });
-        });
+                        ensureUserTableSchema()
+                            .then(() => getOrCreateCashierUser('cashier'))
+                            .catch((schemaErr) => {
+                            console.error("Error preparing local user schema:", schemaErr);
+                        });
 
                 db.all(`PRAGMA table_info(FoodItem)`, [], (err, columns) => {
                     if (err) {
@@ -4078,7 +3149,7 @@ ipcMain.on("search-orders", (event, filters) => {
 
 // Handle fetching all cashiers
 ipcMain.on("get-all-cashiers", (event) => {
-    db.all("SELECT userid, uname FROM User WHERE isadmin = 0 OR isadmin = 1", [], (err, rows) => {
+    db.all("SELECT userid, uname FROM User", [], (err, rows) => {
         if (err) {
             console.error(err);
             event.sender.send("all-cashiers-response", []);

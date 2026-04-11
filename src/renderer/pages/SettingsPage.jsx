@@ -188,6 +188,10 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
     }
   };
 
+  const handleExitApp = () => {
+    ipcService.send('exit-app');
+  };
+
   return (
     <div className="space-y-4">
 
@@ -261,6 +265,15 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
       {activeTab === 'restore' && (
         <BackupRestorePage mode="restore" />
       )}
+
+      <section className="surface-card rounded-2xl p-5 space-y-4 max-w-lg">
+        <div>
+          <h2 className="text-xl font-black text-on-light">App Controls</h2>
+          <p className="text-sm text-muted mt-1">Close the application directly from settings.</p>
+        </div>
+
+        <Button type="button" variant="secondary" onClick={handleExitApp}>Exit App</Button>
+      </section>
     </div>
   );
 }

@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
 
-function todayIsoDate() {
-  return new Date().toISOString().split('T')[0];
+function localDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function formatCurrency(value) {
@@ -14,6 +17,7 @@ function formatCurrency(value) {
 }
 
 const BILL_TIMEOUT_MS = 15000;
+const BILLING_DRAFT_KEY = 'billingDraft:v1';
 
 export default function BillingPage({ user }) {
   const [categories, setCategories] = useState([]);
@@ -34,6 +38,43 @@ export default function BillingPage({ user }) {
   const [lastBill, setLastBill] = useState(null);
   const mountedRef = useRef(true);
   const billTimerRef = useRef(null);
+  const draftLoadedRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(BILLING_DRAFT_KEY);
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (Array.isArray(draft?.cart)) setCart(draft.cart);
+        if (typeof draft?.discountPercent === 'string') setDiscountPercent(draft.discountPercent);
+        if (typeof draft?.discountAmount === 'string') setDiscountAmount(draft.discountAmount);
+        if (typeof draft?.itemSearch === 'string') setItemSearch(draft.itemSearch);
+        if (typeof draft?.selectedCategory === 'string') setSelectedCategory(draft.selectedCategory);
+      }
+    } catch (err) {
+      console.error('Failed to restore billing draft:', err);
+    } finally {
+      draftLoadedRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftLoadedRef.current) return;
+    try {
+      sessionStorage.setItem(
+        BILLING_DRAFT_KEY,
+        JSON.stringify({
+          cart,
+          discountPercent,
+          discountAmount,
+          itemSearch,
+          selectedCategory,
+        })
+      );
+    } catch (err) {
+      console.error('Failed to persist billing draft:', err);
+    }
+  }, [cart, discountPercent, discountAmount, itemSearch, selectedCategory]);
 
   const loadCategories = async () => {
     setLoading(true);
@@ -276,7 +317,7 @@ export default function BillingPage({ user }) {
 
     ipcService.send('save-bill', {
       cashier: user.userid,
-      date: todayIsoDate(),
+      date: localDateString(),
       orderItems: toOrderItems(),
       totalAmount: finalTotal,
     });
@@ -304,7 +345,7 @@ export default function BillingPage({ user }) {
 
     ipcService.send('hold-bill', {
       cashier: user.userid,
-      date: todayIsoDate(),
+      date: localDateString(),
       orderItems: toOrderItems(),
     });
 

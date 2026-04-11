@@ -3,8 +3,11 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/dialogs';
 import ipcService from '@/services/ipcService';
 
-function today() {
-  return new Date().toISOString().split('T')[0];
+function localDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function formatCurrency(value) {
@@ -102,8 +105,8 @@ function EditOrderModal({ billno, onSave, onCancel, busy }) {
 
 export default function OperationsPage({ initialTab }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'todaysOrders');
-  const [startDate, setStartDate] = useState(today());
-  const [endDate, setEndDate] = useState(today());
+  const [startDate, setStartDate] = useState(localDateString());
+  const [endDate, setEndDate] = useState(localDateString());
   const [todayOrders, setTodayOrders] = useState([]);
   const [discountedOrders, setDiscountedOrders] = useState([]);
   const [deletedOrders, setDeletedOrders] = useState([]);

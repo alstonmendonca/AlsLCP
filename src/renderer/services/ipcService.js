@@ -55,12 +55,13 @@ export const ipcService = {
 
     return new Promise((resolve, reject) => {
       let timeoutId;
+      let replyWrapper;
 
       const cleanup = () => {
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
-        api.removeListener(replyChannel, onReply);
+        api.removeListener(replyChannel, replyWrapper || onReply);
       };
 
       const onReply = (data) => {
@@ -73,7 +74,7 @@ export const ipcService = {
         reject(new Error(`Timed out waiting for ${replyChannel}`));
       }, timeoutMs);
 
-      api.on(replyChannel, onReply);
+      replyWrapper = api.on(replyChannel, onReply);
       api.send(sendChannel, payload);
     });
   },
