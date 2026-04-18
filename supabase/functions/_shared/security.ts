@@ -81,5 +81,5 @@ export function isValidPin(pin: string): boolean {
 }
 
 export function isValidActivationKey(keyCode: string): boolean {
-  return /^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){3,4}$/.test(String(keyCode || "").trim().toUpperCase());
+  return /^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}$/.test(String(keyCode || "").trim().toUpperCase());
 }

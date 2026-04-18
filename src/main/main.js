@@ -539,7 +539,7 @@ function isValidPin(pin) {
 }
 
 function isValidActivationKeyFormat(keyCode) {
-    return /^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){3,4}$/.test(String(keyCode || '').trim().toUpperCase());
+    return /^[A-Z0-9]{5}(?:-[A-Z0-9]{5}){4}$/.test(String(keyCode || '').trim().toUpperCase());
 }
 
 function toSessionUser(row) {
@@ -958,6 +958,7 @@ function setupIPC() {
                 contactEmail,
                 contactAddress,
                 masterPin,
+                createSubscription: Boolean(payload?.createSubscription),
                 adminName,
                 adminUsername,
                 adminPassword,
@@ -988,7 +989,7 @@ function setupIPC() {
                     contact_name, contact_phone, contact_email, contact_address, master_pin_hash,
                     app_instance_id, app_version, platform, arch,
                     remote_project_url, remote_anon_key, activated_at, updated_at
-                ) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+                ) VALUES (1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
                 [
                     activationKey,
                     tenantId,
@@ -1057,6 +1058,31 @@ function setupIPC() {
 
     ipcMain.handle('get-update-status', async () => {
         return updateService.getStatus();
+    });
+
+    ipcMain.handle('get-subscription-status', async () => {
+        try {
+            const setupRow = await getAppSetupRow();
+            if (!setupRow || Number(setupRow?.is_initialized || 0) !== 1) {
+                return { success: false, message: 'App setup is incomplete.' };
+            }
+
+            const remoteConfig = getRemoteAuthConfig(setupRow);
+            if (!remoteConfig) {
+                return { success: false, message: 'Supabase configuration is missing.' };
+            }
+
+            const appInstanceId = String(store.get('appInstanceId') || '').trim();
+            return await callRemoteAuthFunction(remoteConfig, 'subscription-status', {
+                tenantId: String(setupRow.tenant_id || '').trim(),
+                appInstanceId,
+                appVersion: app.getVersion(),
+                platform: process.platform,
+                arch: process.arch,
+            });
+        } catch (error) {
+            return { success: false, message: error.message || 'Failed to fetch subscription status.' };
+        }
     });
 
     ipcMain.handle('check-for-updates', async () => {

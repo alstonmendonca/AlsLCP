@@ -46,6 +46,7 @@ const allowedInvokeChannels = new Set([
   'initialize-app-setup',
   'get-app-identity',
   'get-update-status',
+  'get-subscription-status',
   'check-for-updates',
   'download-update',
   'install-update',

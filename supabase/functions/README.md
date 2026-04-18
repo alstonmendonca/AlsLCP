@@ -18,6 +18,9 @@ This folder contains Edge Functions for the setup/login flow.
 - `check-update`
   - Validates tenant, subscription, and registered installation
   - Returns signed download URL for the latest approved installer
+- `subscription-status`
+  - Returns tenant subscription status and expiry/remaining details
+  - Used by Settings > Updates to show current subscription state
 
 ## Shared helpers
 
@@ -35,6 +38,7 @@ supabase functions deploy login
 supabase functions deploy admin-add-employee
 supabase functions deploy admin-reset-pin
 supabase functions deploy check-update
+supabase functions deploy subscription-status
 ```
 
 ## Local serve (optional)

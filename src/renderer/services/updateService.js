@@ -32,6 +32,10 @@ export const updateService = {
     return await ipcService.invoke('get-update-status');
   },
 
+  async getSubscriptionStatus() {
+    return await ipcService.invoke('get-subscription-status');
+  },
+
   async checkForUpdates() {
     return await ipcService.invoke('check-for-updates');
   },

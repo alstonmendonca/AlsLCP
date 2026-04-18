@@ -473,6 +473,7 @@ function AppControlsTab({ onExitApp }) {
 }
 
 function UpdateTab() {
+  const CONTACT_MESSAGE = 'Contact Alston Mendonca to subscribe: alstondmendonca@gmail.com';
   const [state, setState] = useState({
     status: 'idle',
     updateAvailable: false,
@@ -489,19 +490,49 @@ function UpdateTab() {
     progress: 0,
   });
   const [busy, setBusy] = useState(false);
+  const [subscription, setSubscription] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [subscribeInfo, setSubscribeInfo] = useState('');
+
+  const formatDateTime = (value) => {
+    if (!value) return 'N/A';
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleString();
+  };
+
+  const getRemainingLabel = () => {
+    if (!subscription?.subscription) return 'Not added';
+    if (!subscription.subscription.hasExpiry) return 'No expiry set';
+    if (typeof subscription.subscription.remainingDays !== 'number') return 'N/A';
+    if (subscription.subscription.remainingDays <= 0) return 'Expired';
+    return `${subscription.subscription.remainingDays} day(s)`;
+  };
 
   useEffect(() => {
     let mounted = true;
 
     const load = async () => {
+      setSubscriptionLoading(true);
       try {
-        const snapshot = await updateService.getStatus();
+        const [snapshot, subscriptionSnapshot] = await Promise.all([
+          updateService.getStatus(),
+          updateService.getSubscriptionStatus(),
+        ]);
+
         if (mounted && snapshot) {
           setState(snapshot);
+        }
+        if (mounted) {
+          setSubscription(subscriptionSnapshot || null);
         }
       } catch (error) {
         if (mounted) {
           setState((prev) => ({ ...prev, error: 'Could not load update status.' }));
+          setSubscription({ success: false, message: 'Could not load subscription status.' });
+        }
+      } finally {
+        if (mounted) {
+          setSubscriptionLoading(false);
         }
       }
     };
@@ -558,12 +589,62 @@ function UpdateTab() {
   };
 
   const releaseNotes = state.updateInfo?.releaseNotes || '';
+  const isSubscribed = Boolean(subscription?.subscribed);
+  const hasSubscriptionRecord = Boolean(subscription?.subscription);
+  const subscriptionStatusText = subscriptionLoading
+    ? 'Loading...'
+    : (subscription?.subscription?.status || (subscription?.subscribed ? 'active' : 'not added'));
 
   return (
     <section className="surface-card rounded-2xl p-5 space-y-4 max-w-2xl">
       <div>
         <h2 className="text-xl font-black text-on-light">Updates</h2>
         <p className="text-sm text-muted mt-1">Check for signed Supabase-hosted releases and install them manually.</p>
+      </div>
+
+      <div className="rounded-xl border border-on-light p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-on-light">Subscription</p>
+          <span className={`text-xs font-semibold px-2 py-1 rounded ${isSubscribed ? 'bg-success/15 text-success' : 'bg-black/10 text-on-light'}`}>
+            {subscriptionStatusText}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-lg border border-on-light p-3">
+            <p className="text-xs uppercase text-muted">Started</p>
+            <p className="mt-1 text-on-light">{formatDateTime(subscription?.subscription?.startsAt)}</p>
+          </div>
+          <div className="rounded-lg border border-on-light p-3">
+            <p className="text-xs uppercase text-muted">Ends</p>
+            <p className="mt-1 text-on-light">{formatDateTime(subscription?.subscription?.expiresAt)}</p>
+          </div>
+          <div className="rounded-lg border border-on-light p-3">
+            <p className="text-xs uppercase text-muted">Remaining</p>
+            <p className="mt-1 text-on-light">{getRemainingLabel()}</p>
+          </div>
+        </div>
+
+        {!hasSubscriptionRecord ? (
+          <p className="text-sm text-muted">
+            No subscription was added during setup.
+          </p>
+        ) : null}
+
+        {!isSubscribed ? (
+          <div className="space-y-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setSubscribeInfo(CONTACT_MESSAGE)}
+            >
+              Subscribe
+            </Button>
+            {subscribeInfo ? <p className="text-sm text-muted">{subscribeInfo}</p> : null}
+          </div>
+        ) : null}
+
+        {subscription?.message ? <p className="text-xs text-muted">{subscription.message}</p> : null}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">

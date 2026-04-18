@@ -8,6 +8,7 @@ const initialForm = {
   supabaseProjectUrl: 'https://cjkbjnazwewpnzypgber.supabase.co',
   supabaseAnonKey: '',
   activationKey: '',
+  createSubscription: false,
   tenantId: '',
   tenantName: '',
   tenantLocation: '',
@@ -87,6 +88,7 @@ export default function SetupPage({ onSetupComplete }) {
         contactEmail: form.contactEmail.trim(),
         contactAddress: form.contactAddress.trim(),
         masterPin: form.masterPin.trim(),
+      createSubscription: Boolean(form.createSubscription),
         adminName: form.adminName.trim(),
         adminUsername: form.adminUsername.trim(),
         adminPassword: form.adminPassword,
@@ -217,12 +219,23 @@ export default function SetupPage({ onSetupComplete }) {
                 <div>
                   <label className="block text-xs uppercase text-muted mb-1">Activation Key</label>
                   <input value={form.activationKey} onChange={(e) => setField('activationKey', e.target.value.toUpperCase())} className="surface-input h-10 w-full rounded-lg px-3 font-mono" placeholder="ABCDE-ABCDE-ABCDE-ABCDE" required />
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Accepts 4-block or 5-block activation key format.</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Use the 5-block activation key format only.</p>
                 </div>
                 <div>
                   <label className="block text-xs uppercase text-muted mb-1">Master PIN</label>
                   <input type="password" value={form.masterPin} onChange={(e) => setField('masterPin', e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4 to 8 digits" required />
                 </div>
+                <label className="flex items-start gap-3 rounded-xl border border-[color:var(--border-subtle)] px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={form.createSubscription}
+                    onChange={(e) => setField('createSubscription', e.target.checked)}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <span className="text-sm leading-5">
+                    Add a subscription for this tenant. If enabled, it starts now and expires after 1 year.
+                  </span>
+                </label>
               </div>
             )}
 

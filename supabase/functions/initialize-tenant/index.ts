@@ -30,6 +30,7 @@ Deno.serve(async (req) => {
     const platform = String(body.platform || "").trim() || "unknown";
     const arch = String(body.arch || "").trim() || "unknown";
     const masterPin = String(body.masterPin || "").trim();
+    const createSubscription = Boolean(body.createSubscription);
     const adminName = String(body.adminName || "").trim();
     const adminUsername = String(body.adminUsername || "").trim().toLowerCase();
     const adminPassword = String(body.adminPassword || "");
@@ -148,7 +149,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const nowIso = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
 
     const { error: deviceErr } = await supabase
       .from("tenant_devices")
@@ -178,31 +180,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { error: subscriptionErr } = await supabase
-      .from("tenant_subscriptions")
-      .upsert({
-        tenant_id: tenant.id,
-        plan_name: "starter",
-        status: "active",
-        starts_at: nowIso,
-        expires_at: null,
-        grace_until: null,
-        notes: "Provisioned during initial setup",
-      }, { onConflict: "tenant_id" });
+    if (createSubscription) {
+      const expiresAt = new Date(now);
+      expiresAt.setFullYear(expiresAt.getFullYear() + 1);
 
-    if (subscriptionErr) {
-      await supabase.from("tenant_devices").delete().eq("tenant_id", tenant.id);
-      await supabase.from("tenant_users").delete().eq("tenant_id", tenant.id);
-      await supabase.from("tenants").delete().eq("id", tenant.id);
-      await supabase
-        .from("activation_keys")
-        .update({ status: "available", assigned_at: null })
-        .eq("id", keyReservation.id);
+      const { error: subscriptionErr } = await supabase
+        .from("tenant_subscriptions")
+        .upsert({
+          tenant_id: tenant.id,
+          plan_name: "annual-addon",
+          status: "active",
+          starts_at: nowIso,
+          expires_at: expiresAt.toISOString(),
+          grace_until: null,
+          notes: "Optional subscription add-on selected during initial setup",
+        }, { onConflict: "tenant_id" });
 
-      return new Response(JSON.stringify({ success: false, message: subscriptionErr.message || "Failed to create subscription record" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      if (subscriptionErr) {
+        await supabase.from("tenant_devices").delete().eq("tenant_id", tenant.id);
+        await supabase.from("tenant_users").delete().eq("tenant_id", tenant.id);
+        await supabase.from("tenants").delete().eq("id", tenant.id);
+        await supabase
+          .from("activation_keys")
+          .update({ status: "available", assigned_at: null })
+          .eq("id", keyReservation.id);
+
+        return new Response(JSON.stringify({ success: false, message: subscriptionErr.message || "Failed to create subscription record" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     const { error: consumeErr } = await supabase
