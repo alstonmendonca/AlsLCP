@@ -497,7 +497,16 @@ function UpdateTab() {
   const formatDateTime = (value) => {
     if (!value) return 'N/A';
     const dt = new Date(value);
-    return Number.isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleString();
+    if (Number.isNaN(dt.getTime())) return 'N/A';
+    const day = String(dt.getDate()).padStart(2, '0');
+    const month = String(dt.getMonth() + 1).padStart(2, '0');
+    const year = dt.getFullYear();
+    const time = dt.toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    return `${day}-${month}-${year} ${time}`;
   };
 
   const getRemainingLabel = () => {
@@ -663,7 +672,7 @@ function UpdateTab() {
         <div className="rounded-xl border border-on-light p-3">
           <p className="text-xs uppercase text-muted">Last Checked</p>
           <p className="mt-1 font-semibold text-on-light">
-            {state.lastCheckedAt ? new Date(state.lastCheckedAt).toLocaleString() : 'Never'}
+            {state.lastCheckedAt ? formatDateTime(state.lastCheckedAt) : 'Never'}
           </p>
         </div>
       </div>

@@ -61,6 +61,7 @@ export default function HistoryPage() {
             <label className="block text-xs uppercase tracking-[0.15em] text-muted mb-1">Start Date</label>
             <input
               type="date"
+              lang="en-GB"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               className="surface-input h-10 rounded-lg px-3"
@@ -70,6 +71,7 @@ export default function HistoryPage() {
             <label className="block text-xs uppercase tracking-[0.15em] text-muted mb-1">End Date</label>
             <input
               type="date"
+              lang="en-GB"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               className="surface-input h-10 rounded-lg px-3"

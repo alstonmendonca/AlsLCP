@@ -10,6 +10,18 @@ function localDateString(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function localDateTimeString(date = new Date()) {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const time = date.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  return `${day}-${month}-${year} ${time}`;
+}
+
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -476,7 +488,7 @@ export default function BillingPage({ user }) {
       totalAmount: billData.amount,
       kot: billData.kot,
       orderId: billData.orderId,
-      dateTime: new Date().toLocaleString('en-IN'),
+      dateTime: localDateTimeString(),
       retries,
     });
   };

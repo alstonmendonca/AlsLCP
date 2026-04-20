@@ -224,7 +224,7 @@ export default function DashboardPage({ user, onLogout }) {
             {pageTitle}
           </h1>
           <p className="text-xs" style={{ color: 'var(--text-on-light)', opacity: 0.55 }}>
-            {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </header>
 

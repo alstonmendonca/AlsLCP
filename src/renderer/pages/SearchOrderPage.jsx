@@ -10,7 +10,10 @@ function formatDate(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleDateString('en-IN');
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
 }
 
 export default function SearchOrderPage() {
@@ -97,11 +100,11 @@ export default function SearchOrderPage() {
           </div>
           <div>
             <label className="block text-xs uppercase text-muted mb-1">Start Date</label>
-            <input type="date" value={filters.startDate} onChange={(e) => set('startDate', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+            <input type="date" lang="en-GB" value={filters.startDate} onChange={(e) => set('startDate', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
           </div>
           <div>
             <label className="block text-xs uppercase text-muted mb-1">End Date</label>
-            <input type="date" value={filters.endDate} onChange={(e) => set('endDate', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
+            <input type="date" lang="en-GB" value={filters.endDate} onChange={(e) => set('endDate', e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
           </div>
           <div>
             <label className="block text-xs uppercase text-muted mb-1">Cashier</label>
