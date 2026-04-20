@@ -19,6 +19,8 @@ The current Supabase database for this project contains these public objects:
   - trg_activation_keys_updated_at
   - trg_tenants_updated_at
   - trg_tenant_users_updated_at
+  - expire_due_tenant_subscriptions()
+  - trg_tenant_subscriptions_apply_expiry
 
 Notes:
 
@@ -158,8 +160,9 @@ Key columns:
 
 Operational behavior:
 
-- initialize-tenant seeds starter + active.
+- initialize-tenant creates a subscription only when setup sends `createSubscription=true`.
 - check-update allows update based on status + expiry/grace logic.
+- migration `202604181045_auto_expire_subscriptions.sql` auto-transitions due rows to `expired`.
 
 ---
 
@@ -270,14 +273,13 @@ Required field:
 
 Recommended format:
 
-- Uppercase alphanumeric blocks, e.g. `ABCDE-ABCDE-ABCDE-ABCDE`
-- The current app validation allows either 4 blocks or 5 blocks of 5 characters each.
+- Uppercase alphanumeric 5-block format only, e.g. `ABCDE-ABCDE-ABCDE-ABCDE-ABCDE`.
 
 ### 6.1 Add one new activation key
 
 ```sql
 insert into public.activation_keys (key_code, status, notes)
-values ('ALSP0-AB12C-34DEF-56GHI', 'available', 'Manual provisioning key');
+values ('ALSP0-AB12C-34DEF-56GHI-78JKL', 'available', 'Manual provisioning key');
 ```
 
 ### 6.2 Add multiple activation keys in one go
@@ -285,9 +287,9 @@ values ('ALSP0-AB12C-34DEF-56GHI', 'available', 'Manual provisioning key');
 ```sql
 insert into public.activation_keys (key_code, status)
 values
-  ('ALSP0-JK78L-90MNO-12PQR', 'available'),
-  ('ALSP0-ST34U-56VWX-78YZA', 'available'),
-  ('ALSP0-BC90D-12EFG-34HIJ', 'available')
+  ('ALSP0-JK78L-90MNO-12PQR-45STU', 'available'),
+  ('ALSP0-ST34U-56VWX-78YZA-90BCD', 'available'),
+  ('ALSP0-BC90D-12EFG-34HIJ-56KLM', 'available')
 on conflict (key_code) do nothing;
 ```
 
@@ -304,7 +306,7 @@ order by created_at desc;
 ```sql
 update public.activation_keys
 set status = 'revoked'
-where key_code = 'ALSP0-AB12C-34DEF-56GHI';
+where key_code = 'ALSP0-AB12C-34DEF-56GHI-78JKL';
 ```
 
 ### 6.5 What happens automatically after key creation
@@ -313,7 +315,7 @@ Once a key exists in `activation_keys` with status `available`, the rest is hand
 
 1. `initialize-tenant` reserves the key (`available -> reserved`).
 2. Tenant and master admin are created.
-3. Device and subscription rows are seeded.
+3. Device row is seeded, and subscription row is created only if `createSubscription=true`.
 4. Key is finalized as `used` and linked to the tenant.
 
 No additional manual row creation is required for activation flow beyond adding the key itself.
@@ -331,7 +333,15 @@ This section is the exact release process for the current app implementation.
 3. Ensure Supabase schema and functions are deployed:
    - initialize-tenant
    - check-update
+  - subscription-status
 4. Confirm private Storage bucket exists (recommended name: updates).
+
+CLI commands:
+
+- `npx supabase db push`
+- `npx supabase functions deploy initialize-tenant`
+- `npx supabase functions deploy check-update`
+- `npx supabase functions deploy subscription-status`
 
 ## 7.2 Build Installer
 
@@ -450,6 +460,14 @@ Expected outcomes:
 - Keep release version immutable after publish.
 - Use rollout_percent < 100 for staged rollouts.
 - Revoke compromised devices via tenant_devices.status='revoked'.
+- Keep `expires_at` set for paid plans so auto-expiry can transition stale subscriptions to `expired`.
+
+### 8.1 Subscription Auto-Expiry Behavior
+
+- `expire_due_tenant_subscriptions()` marks due rows as `expired`.
+- `trg_tenant_subscriptions_apply_expiry` enforces expiry on insert/update.
+- `check-update` and `subscription-status` call the expiry function before evaluating status.
+- Optional `pg_cron` schedule runs every minute to expire due rows in the background.
 
 ---
 

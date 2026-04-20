@@ -34,10 +34,19 @@ Only store hashes from the application or backend.
 
 ## How to apply the schema
 
+Preferred (CLI):
+
+1. Run `npx supabase db push` from the repo root.
+2. Confirm migrations are applied with `npx supabase migration list`.
+
+Fallback (SQL Editor):
+
 1. Open the Supabase SQL Editor.
 2. Paste the contents of [supabase/001_initial_schema.sql](../supabase/001_initial_schema.sql).
 3. Run the script.
 4. Confirm activation keys and required tables were created.
+
+Note: subscription auto-expiry is provided by migration [supabase/migrations/202604181045_auto_expire_subscriptions.sql](../supabase/migrations/202604181045_auto_expire_subscriptions.sql).
 
 ## How to add a new activation key
 
@@ -45,7 +54,7 @@ When you need a new onboarding key, add it in `public.activation_keys` with `sta
 
 ```sql
 insert into public.activation_keys (key_code, status, notes)
-values ('ALSP0-AB12C-34DEF-56GHI', 'available', 'Manual key provisioning');
+values ('ALSP0-AB12C-34DEF-56GHI-78JKL', 'available', 'Manual key provisioning');
 ```
 
 Then verify:
@@ -56,7 +65,11 @@ from public.activation_keys
 order by created_at desc;
 ```
 
-After that, setup handles the rest automatically through `initialize-tenant` (reserve key, create tenant/admin/device/subscription, mark key used).
+After that, setup handles the rest automatically through `initialize-tenant` (reserve key, create tenant/admin/device, optionally create subscription, mark key used).
+
+Activation key format is strictly 5 blocks of 5 uppercase alphanumeric characters:
+
+- `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`
 
 ## Recommended onboarding flow
 
@@ -71,6 +84,7 @@ After that, setup handles the rest automatically through `initialize-tenant` (re
 4. Create the first `tenant_users` row for the master admin.
 5. Allow the master admin to create employee accounts and employee PINs.
 6. Register app installation identity for the tenant device record.
+7. Optionally create an initial subscription during setup (one-year active plan) when `createSubscription` is enabled.
 
 ## What the schema does not do by itself
 
@@ -91,6 +105,11 @@ Deploy backend or Supabase Edge Functions for:
 - employee account creation
 - login by username/password or PIN
 - update authorization and signed artifact URL generation
+
+For production update/subscription behavior, also deploy:
+
+- `check-update`
+- `subscription-status`
 
 ## Credential reminder
 

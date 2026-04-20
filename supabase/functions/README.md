@@ -33,18 +33,18 @@ This folder contains Edge Functions for the setup/login flow.
 Run these from the repo root after logging into Supabase CLI:
 
 ```bash
-supabase functions deploy initialize-tenant
-supabase functions deploy login
-supabase functions deploy admin-add-employee
-supabase functions deploy admin-reset-pin
-supabase functions deploy check-update
-supabase functions deploy subscription-status
+npx supabase functions deploy initialize-tenant
+npx supabase functions deploy login
+npx supabase functions deploy admin-add-employee
+npx supabase functions deploy admin-reset-pin
+npx supabase functions deploy check-update
+npx supabase functions deploy subscription-status
 ```
 
 ## Local serve (optional)
 
 ```bash
-supabase functions serve --env-file supabase/.env.local
+npx supabase functions serve --env-file supabase/.env.local
 ```
 
 ## Required environment variables
@@ -63,3 +63,9 @@ Run the SQL in `supabase/001_initial_schema.sql` to create:
 - `tenant_subscriptions` for expiry / entitlement checks
 - `app_releases` for platform-specific release metadata
 - `update_audit_log` for update decision history
+
+Then apply migrations (recommended):
+
+- `npx supabase db push`
+
+This includes `202604181045_auto_expire_subscriptions.sql`, which adds automatic expiry normalization for `tenant_subscriptions`.
