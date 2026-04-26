@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
 const path = require("path");
 const url = require("url");
 const crypto = require('crypto');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const fs = require('fs');
 const Store = require('electron-store');
 const printService = require('./services/printService');
@@ -112,32 +112,10 @@ async function initializeDatabaseConnection() {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            await new Promise((resolve, reject) => {
-                const handle = new sqlite3.Database(
-                    dbPath,
-                    sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE,
-                    (err) => {
-                        if (err) {
-                            try {
-                                handle.close(() => {});
-                            } catch (_) {
-                                // Ignore close errors on failed open.
-                            }
-                            reject(err);
-                            return;
-                        }
-
-                        db = handle;
-                        db.configure('busyTimeout', 5000);
-                        db.serialize(() => {
-                            db.run('PRAGMA busy_timeout = 5000');
-                            db.run('PRAGMA foreign_keys = ON');
-                        });
-
-                        resolve();
-                    }
-                );
-            });
+            db = new Database(dbPath, { readonly: false });
+            db.pragma('busy_timeout = 5000');
+            db.pragma('foreign_keys = ON');
+            db.pragma('journal_mode = WAL');
 
             console.log("✅ Connected to the SQLite database.");
             await initializeSchema();
@@ -148,6 +126,11 @@ async function initializeDatabaseConnection() {
                 `❌ Database open attempt ${attempt}/${maxAttempts} failed:`,
                 err.message
             );
+
+            if (db) {
+                try { db.close(); } catch (_) {}
+                db = null;
+            }
 
             if (isLastAttempt) {
                 throw err;
@@ -189,51 +172,19 @@ async function initStore() {
 }
 
 function dbGetAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-        db.get(query, params, (err, row) => {
-            if (err) {
-                reject(err);
-                return;
-            }
-            resolve(row);
-        });
-    });
+    return db.prepare(query).get(...params);
 }
 
 function dbRunAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-        db.run(query, params, function runCallback(err) {
-            if (err) {
-                reject(err);
-                return;
-            }
-            resolve(this);
-        });
-    });
+    return db.prepare(query).run(...params);
 }
 
 function dbExecAsync(query) {
-    return new Promise((resolve, reject) => {
-        db.exec(query, (err) => {
-            if (err) {
-                reject(err);
-                return;
-            }
-            resolve();
-        });
-    });
+    db.exec(query);
 }
 
 function dbAllAsync(query, params = []) {
-    return new Promise((resolve, reject) => {
-        db.all(query, params, (err, rows) => {
-            if (err) {
-                reject(err);
-                return;
-            }
-            resolve(rows || []);
-        });
-    });
+    return db.prepare(query).all(...params);
 }
 
 async function ensureUserTableSchema() {
@@ -788,7 +739,7 @@ function createMainWindow() {
     // Force a repaint to fix potential rendering issues
     setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.invalidate();
+        mainWindow.webContents.executeJavaScript('void 0').catch(() => {});
       }
     }, 100);
   });
@@ -1015,6 +966,8 @@ function setupIPC() {
                 arch,
             });
 
+            await dbRunAsync('BEGIN TRANSACTION');
+
             const keyRow = await dbGetAsync(
                 'SELECT id, key_code, status FROM ActivationKey WHERE key_code = ? LIMIT 1',
                 [activationKey]
@@ -1027,8 +980,6 @@ function setupIPC() {
                     [activationKey, tenantId]
                 );
             }
-
-            await dbRunAsync('BEGIN TRANSACTION');
 
             await dbRunAsync(
                 `INSERT INTO AppSetup (
@@ -1528,10 +1479,12 @@ app.on('window-all-closed', () => {
 
 function closeDatabase() {
     if (db) {
-        db.close((err) => {
-            if (err) console.error("Error closing database", err);
-            else console.log("Database connection closed");
-        });
+        try {
+            db.close();
+            console.log("Database connection closed");
+        } catch (err) {
+            console.error("Error closing database", err);
+        }
     }
 }
 
@@ -1560,325 +1513,166 @@ ipcMain.on("get-item-summary", (event, { startDate, endDate }) => {
         ORDER BY Category.catname, FoodItem.fname
     `;
 
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error("Error fetching item summary:", err);
-            event.reply("item-summary-response", { success: false, items: [] });
-            return;
-        }
+    try {
+        const rows = dbAllAsync(query, [startDate, endDate]);
         event.reply("item-summary-response", { success: true, items: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching item summary:", err);
+        event.reply("item-summary-response", { success: false, items: [] });
+    }
 });
 // IPC handler to get today's revenue
-ipcMain.handle('get-todays-revenue', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `SELECT SUM(price) AS totalRevenue FROM Orders WHERE date LIKE ?`;
-        
-        db.get(query, [`${today}%`], (err, row) => {
-            if (err) {
-                console.error("Error fetching today's revenue:", err);
-                reject(err);
-            } else {
-                resolve(row.totalRevenue || 0); // Return total revenue or 0 if null
-            }
-        });
-    });
+ipcMain.handle('get-todays-revenue', () => {
+    const today = getLocalDateString();
+    const row = dbGetAsync(`SELECT SUM(price) AS totalRevenue FROM Orders WHERE date LIKE ?`, [`${today}%`]);
+    return row?.totalRevenue || 0;
 });
 
-// IPC handler to get today's sales count
-ipcMain.handle('get-todays-sales', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `SELECT COUNT(*) AS totalSales FROM Orders WHERE date LIKE ?`;
-        
-        db.get(query, [`${today}%`], (err, row) => {
-            if (err) {
-                console.error("Error fetching today's sales count:", err);
-                reject(err);
-            } else {
-                resolve(row.totalSales || 0); // Return total sales count or 0 if null
-            }
-        });
-    });
+ipcMain.handle('get-todays-sales', () => {
+    const today = getLocalDateString();
+    const row = dbGetAsync(`SELECT COUNT(*) AS totalSales FROM Orders WHERE date LIKE ?`, [`${today}%`]);
+    return row?.totalSales || 0;
 });
 
-// IPC handler to get today's tax amount
-ipcMain.handle('get-todays-tax', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `SELECT SUM(tax) AS totalTax FROM Orders WHERE date LIKE ?`;
-        
-        db.get(query, [`${today}%`], (err, row) => {
-            if (err) {
-                console.error("Error fetching today's tax amount:", err);
-                reject(err);
-            } else {
-                resolve(row.totalTax || 0); // Return total tax amount or 0 if null
-            }
-        });
-    });
+ipcMain.handle('get-todays-tax', () => {
+    const today = getLocalDateString();
+    const row = dbGetAsync(`SELECT SUM(tax) AS totalTax FROM Orders WHERE date LIKE ?`, [`${today}%`]);
+    return row?.totalTax || 0;
 });
 
-// IPC handler to get today's discounted orders count
-ipcMain.handle('get-todays-discounted-orders', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `SELECT COUNT(*) AS discountedCount FROM DiscountedOrders WHERE billno IN (SELECT billno FROM Orders WHERE date LIKE ?)`;
-        
-        db.get(query, [`${today}%`], (err, row) => {
-            if (err) {
-                console.error("Error fetching today's discounted orders count:", err);
-                reject(err);
-            } else {
-                resolve(row.discountedCount || 0); // Return discounted orders count or 0 if null
-            }
-        });
-    });
+ipcMain.handle('get-todays-discounted-orders', () => {
+    const today = getLocalDateString();
+    const row = dbGetAsync(`SELECT COUNT(*) AS discountedCount FROM DiscountedOrders WHERE billno IN (SELECT billno FROM Orders WHERE date LIKE ?)`, [`${today}%`]);
+    return row?.discountedCount || 0;
 });
 
-// IPC handler to get today's deleted orders count
-ipcMain.handle('get-todays-deleted-orders', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `SELECT COUNT(*) AS deletedCount FROM DeletedOrders WHERE date LIKE ?`;
-        
-        db.get(query, [`${today}%`], (err, row) => {
-            if (err) {
-                console.error("Error fetching today's deleted orders count:", err);
-                reject(err);
-            } else {
-                resolve(row.deletedCount || 0); // Return deleted orders count or 0 if null
-            }
-        });
-    });
+ipcMain.handle('get-todays-deleted-orders', () => {
+    const today = getLocalDateString();
+    const row = dbGetAsync(`SELECT COUNT(*) AS deletedCount FROM DeletedOrders WHERE date LIKE ?`, [`${today}%`]);
+    return row?.deletedCount || 0;
 });
 
-// IPC handler to get yesterday's revenue
-ipcMain.handle('get-yesterdays-revenue', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayDate = getLocalDateString(yesterday);
-        const query = `SELECT SUM(price) AS totalRevenue FROM Orders WHERE date LIKE ?`;
-        
-        db.get(query, [`${yesterdayDate}%`], (err, row) => {
-            if (err) {
-                console.error("Error fetching yesterday's revenue:", err);
-                reject(err);
-            } else {
-                resolve(row.totalRevenue || 0); // Return total revenue or 0 if null
-            }
-        });
-    });
+ipcMain.handle('get-yesterdays-revenue', () => {
+    const today = getLocalDateString();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayDate = getLocalDateString(yesterday);
+    const row = dbGetAsync(`SELECT SUM(price) AS totalRevenue FROM Orders WHERE date LIKE ?`, [`${yesterdayDate}%`]);
+    return row?.totalRevenue || 0;
 });
 
 // IPC handler to get today's most sold items
-ipcMain.handle('get-most-sold-items', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `
-            SELECT f.fname, SUM(od.quantity) AS totalQuantity
-            FROM OrderDetails od
-            JOIN Orders o ON od.orderid = o.billno
-            JOIN FoodItem f ON od.foodid = f.fid
-            WHERE o.date LIKE ?
-            GROUP BY f.fid
-            ORDER BY totalQuantity DESC
-            LIMIT 2
-        `;
-        
-        db.all(query, [`${today}%`], (err, rows) => {
-            if (err) {
-                console.error("Error fetching today's most sold items:", err);
-                reject(err);
-            } else {
-                const items = rows.map(row => row.fname); // Extract food names
-                resolve(items); // Return the list of most sold items
-            }
-        });
-    });
+ipcMain.handle('get-most-sold-items', () => {
+    const today = getLocalDateString();
+    const rows = dbAllAsync(`
+        SELECT f.fname, SUM(od.quantity) AS totalQuantity
+        FROM OrderDetails od
+        JOIN Orders o ON od.orderid = o.billno
+        JOIN FoodItem f ON od.foodid = f.fid
+        WHERE o.date LIKE ?
+        GROUP BY f.fid
+        ORDER BY totalQuantity DESC
+        LIMIT 2
+    `, [`${today}%`]);
+    return rows.map(row => row.fname);
 });
 
-// IPC handler to get today's most sold categories
-ipcMain.handle('get-most-sold-categories', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `
-            SELECT c.catname, SUM(od.quantity) AS totalQuantity
-            FROM OrderDetails od
-            JOIN Orders o ON od.orderid = o.billno
-            JOIN FoodItem f ON od.foodid = f.fid
-            JOIN Category c ON f.category = c.catid
-            WHERE o.date LIKE ?
-            GROUP BY c.catid
-            ORDER BY totalQuantity DESC
-            LIMIT 2
-        `;
-        
-        db.all(query, [`${today}%`], (err, rows) => {
-            if (err) {
-                console.error("Error fetching today's most sold categories:", err);
-                reject(err);
-            } else {
-                const categories = rows.map(row => row.catname); // Extract category names
-                resolve(categories); // Return the list of most sold categories
-            }
-        });
-    });
+ipcMain.handle('get-most-sold-categories', () => {
+    const today = getLocalDateString();
+    const rows = dbAllAsync(`
+        SELECT c.catname, SUM(od.quantity) AS totalQuantity
+        FROM OrderDetails od
+        JOIN Orders o ON od.orderid = o.billno
+        JOIN FoodItem f ON od.foodid = f.fid
+        JOIN Category c ON f.category = c.catid
+        WHERE o.date LIKE ?
+        GROUP BY c.catid
+        ORDER BY totalQuantity DESC
+        LIMIT 2
+    `, [`${today}%`]);
+    return rows.map(row => row.catname);
 });
 
-// IPC handler to get today's highest revenue items
-ipcMain.handle('get-highest-revenue-items', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `
-            SELECT f.fname, SUM(od.quantity * f.cost) AS totalRevenue
-            FROM OrderDetails od
-            JOIN Orders o ON od.orderid = o.billno
-            JOIN FoodItem f ON od.foodid = f.fid
-            WHERE o.date LIKE ?
-            GROUP BY f.fid
-            ORDER BY totalRevenue DESC
-            LIMIT 2
-        `;
-        
-        db.all(query, [`${today}%`], (err, rows) => {
-            if (err) {
-                console.error("Error fetching today's highest revenue items:", err);
-                reject(err);
-            } else {
-                const items = rows.map(row => row.fname); // Extract food names
-                resolve(items); // Return the list of highest revenue items
-            }
-        });
-    });
+ipcMain.handle('get-highest-revenue-items', () => {
+    const today = getLocalDateString();
+    const rows = dbAllAsync(`
+        SELECT f.fname, SUM(od.quantity * f.cost) AS totalRevenue
+        FROM OrderDetails od
+        JOIN Orders o ON od.orderid = o.billno
+        JOIN FoodItem f ON od.foodid = f.fid
+        WHERE o.date LIKE ?
+        GROUP BY f.fid
+        ORDER BY totalRevenue DESC
+        LIMIT 2
+    `, [`${today}%`]);
+    return rows.map(row => row.fname);
 });
 
-// IPC handler to get today's highest revenue category
-ipcMain.handle('get-highest-revenue-category', (event) => {
-    return new Promise((resolve, reject) => {
-        const today = getLocalDateString();
-        const query = `
-            SELECT c.catname, SUM(od.quantity * f.cost) AS totalRevenue
-            FROM OrderDetails od
-            JOIN Orders o ON od.orderid = o.billno
-            JOIN FoodItem f ON od.foodid = f.fid
-            JOIN Category c ON f.category = c.catid
-            WHERE o.date LIKE ?
-            GROUP BY c.catid
-            ORDER BY totalRevenue DESC
-        `;
-        
-        db.all(query, [`${today}%`], (err, rows) => {
-            if (err) {
-                console.error("Error fetching today's highest revenue category:", err);
-                reject(err);
-            } else {
-                const highestRevenue = rows.length > 0 ? rows[0].totalRevenue : 0; // Get the highest revenue
-                const categories = rows.filter(row => row.totalRevenue === highestRevenue).map(row => row.catname); // Get all categories with the highest revenue
-                resolve(categories); // Return the list of highest revenue categories
-            }
-        });
-    });
+ipcMain.handle('get-highest-revenue-category', () => {
+    const today = getLocalDateString();
+    const rows = dbAllAsync(`
+        SELECT c.catname, SUM(od.quantity * f.cost) AS totalRevenue
+        FROM OrderDetails od
+        JOIN Orders o ON od.orderid = o.billno
+        JOIN FoodItem f ON od.foodid = f.fid
+        JOIN Category c ON f.category = c.catid
+        WHERE o.date LIKE ?
+        GROUP BY c.catid
+        ORDER BY totalRevenue DESC
+    `, [`${today}%`]);
+    const highestRevenue = rows.length > 0 ? rows[0].totalRevenue : 0;
+    return rows.filter(row => row.totalRevenue === highestRevenue).map(row => row.catname);
 });
 
-// Function to fetch category-wise sales and revenue
 ipcMain.handle('get-category-wise-sales-data', (event, startDate, endDate) => {
-    return new Promise((resolve, reject) => {
-        const query = `
-            SELECT 
-                Category.catid,
-                Category.catname,
-                SUM(OrderDetails.quantity) AS totalSales,
-                SUM(OrderDetails.quantity * FoodItem.cost) AS totalRevenue
-            FROM 
-                Orders
-            INNER JOIN 
-                OrderDetails ON Orders.billno = OrderDetails.orderid
-            INNER JOIN 
-                FoodItem ON OrderDetails.foodid = FoodItem.fid
-            INNER JOIN 
-                Category ON FoodItem.category = Category.catid
-            WHERE 
-                Orders.date BETWEEN ? AND ?
-            GROUP BY 
-                Category.catid
-        `;
-
-        db.all(query, [startDate, endDate], (err, rows) => {
-            if (err) {
-                console.error("Error fetching category-wise sales data:", err);
-                reject(err);
-            } else {
-                resolve(rows);
-            }
-        });
-    });
+    return dbAllAsync(`
+        SELECT 
+            Category.catid,
+            Category.catname,
+            SUM(OrderDetails.quantity) AS totalSales,
+            SUM(OrderDetails.quantity * FoodItem.cost) AS totalRevenue
+        FROM Orders
+        INNER JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
+        INNER JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
+        INNER JOIN Category ON FoodItem.category = Category.catid
+        WHERE Orders.date BETWEEN ? AND ?
+        GROUP BY Category.catid
+    `, [startDate, endDate]);
 });
 
-// Function to fetch sales overview data
 ipcMain.handle('get-sales-overview-data', (event, startDate, endDate) => {
-    return new Promise((resolve, reject) => {
-        const query = `
-            SELECT 
-                date,
-                COUNT(billno) AS totalSales,
-                SUM(price) AS totalRevenue
-            FROM 
-                Orders
-            WHERE 
-                date BETWEEN ? AND ?
-            GROUP BY 
-                date
-            ORDER BY 
-                date ASC
-        `;
-
-        db.all(query, [startDate, endDate], (err, rows) => {
-            if (err) {
-                console.error("Error fetching sales overview data:", err);
-                reject(err);
-            } else {
-                resolve(rows);
-            }
-        });
-    });
+    return dbAllAsync(`
+        SELECT 
+            date,
+            COUNT(billno) AS totalSales,
+            SUM(price) AS totalRevenue
+        FROM Orders
+        WHERE date BETWEEN ? AND ?
+        GROUP BY date
+        ORDER BY date ASC
+    `, [startDate, endDate]);
 });
 
 // Fetch top selling categories for a specific date range
-ipcMain.on("get-top-selling-categories", async (event, { startDate, endDate }) => {
-    const query = `
-        SELECT 
-            Orders.date,
-            Category.catname AS category_name,
-            SUM(OrderDetails.quantity) AS total_quantity
-        FROM Orders
-        JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        JOIN Category ON FoodItem.category = Category.catid
-        WHERE date(Orders.date) BETWEEN date(?) AND date(?)
-        GROUP BY Orders.date, Category.catid
-        ORDER BY Orders.date, total_quantity DESC
-    `;
+ipcMain.on("get-top-selling-categories", (event, { startDate, endDate }) => {
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                Orders.date,
+                Category.catname AS category_name,
+                SUM(OrderDetails.quantity) AS total_quantity
+            FROM Orders
+            JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
+            JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
+            JOIN Category ON FoodItem.category = Category.catid
+            WHERE date(Orders.date) BETWEEN date(?) AND date(?)
+            GROUP BY Orders.date, Category.catid
+            ORDER BY Orders.date, total_quantity DESC
+        `, [startDate, endDate]);
 
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error("Error fetching top selling categories:", err);
-            event.reply("top-selling-categories-response", { success: false, categories: [] });
-            return;
-        }
-
-        // Process the results to get the top-selling category for each date
         const topSellingCategories = {};
         rows.forEach(row => {
-            if (!topSellingCategories[row.date]) {
-                topSellingCategories[row.date] = {
-                    category_name: row.category_name,
-                    total_quantity: row.total_quantity,
-                };
-            } else if (row.total_quantity > topSellingCategories[row.date].total_quantity) {
+            if (!topSellingCategories[row.date] || row.total_quantity > topSellingCategories[row.date].total_quantity) {
                 topSellingCategories[row.date] = {
                     category_name: row.category_name,
                     total_quantity: row.total_quantity,
@@ -1886,132 +1680,105 @@ ipcMain.on("get-top-selling-categories", async (event, { startDate, endDate }) =
             }
         });
 
-        // Convert the object to an array for easier processing
         const categoriesArray = Object.keys(topSellingCategories).map(date => ({
             date,
             category_name: topSellingCategories[date].category_name,
             total_quantity: topSellingCategories[date].total_quantity,
         }));
 
-        // Send the top selling categories to the renderer process
         event.reply("top-selling-categories-response", { success: true, categories: categoriesArray });
-    });
+    } catch (err) {
+        console.error("Error fetching top selling categories:", err);
+        event.reply("top-selling-categories-response", { success: false, categories: [] });
+    }
 });
 
 ipcMain.on('get-employee-analysis', (event, { startDate, endDate }) => {
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                u.userid,
+                u.uname as name,
+                COUNT(DISTINCT o.billno) as order_count,
+                COALESCE(SUM(od.quantity), 0) as total_units,
+                COALESCE(SUM(od.quantity * fi.cost), 0) as total_revenue
+            FROM User u
+            LEFT JOIN Orders o ON u.userid = o.cashier 
+                AND date(o.date) BETWEEN date(?) AND date(?)
+            LEFT JOIN OrderDetails od ON o.billno = od.orderid
+            LEFT JOIN FoodItem fi ON od.foodid = fi.fid
+            GROUP BY u.userid
+            ORDER BY total_revenue DESC
+        `, [startDate, endDate]);
 
-    const query = `
-        SELECT 
-            u.userid,
-            u.uname as name,
-            COUNT(DISTINCT o.billno) as order_count,
-            COALESCE(SUM(od.quantity), 0) as total_units,
-            COALESCE(SUM(od.quantity * fi.cost), 0) as total_revenue
-        FROM 
-            User u
-        LEFT JOIN Orders o ON u.userid = o.cashier 
-            AND date(o.date) BETWEEN date(?) AND date(?)
-        LEFT JOIN OrderDetails od ON o.billno = od.orderid
-        LEFT JOIN FoodItem fi ON od.foodid = fi.fid
-        GROUP BY u.userid
-        ORDER BY total_revenue DESC
-    `;
-
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error('Query error:', err);
-            event.reply('employee-analysis-response', {
-                success: false,
-                error: err.message
-            });
-        } else {
-            event.reply('employee-analysis-response', {
-                success: true,
-                employees: rows || []
-            });
-        }
-    });
+        event.reply('employee-analysis-response', { success: true, employees: rows || [] });
+    } catch (err) {
+        console.error('Query error:', err);
+        event.reply('employee-analysis-response', { success: false, error: err.message });
+    }
 });
 
-// In your main.js file, add this to the IPC handlers section:
-// In your main.js file, add/update this IPC handler:
 ipcMain.on('get-best-in-category', (event, { startDate, endDate }) => {
-    const query = `
-        WITH RankedItems AS (
+    try {
+        const rows = dbAllAsync(`
+            WITH RankedItems AS (
+                SELECT 
+                    c.catid,
+                    c.catname,
+                    f.fname,
+                    SUM(od.quantity) AS total_quantity,
+                    RANK() OVER (PARTITION BY c.catid ORDER BY SUM(od.quantity) DESC) AS rank
+                FROM Orders o
+                JOIN OrderDetails od ON o.billno = od.orderid
+                JOIN FoodItem f ON od.foodid = f.fid
+                JOIN Category c ON f.category = c.catid
+                WHERE o.date BETWEEN ? AND ?
+                GROUP BY c.catid, f.fid
+            )
             SELECT 
-                c.catid,
-                c.catname,
-                f.fname,
-                SUM(od.quantity) AS total_quantity,
-                RANK() OVER (PARTITION BY c.catid ORDER BY SUM(od.quantity) DESC) AS rank
-            FROM Orders o
-            JOIN OrderDetails od ON o.billno = od.orderid
-            JOIN FoodItem f ON od.foodid = f.fid
-            JOIN Category c ON f.category = c.catid
-            WHERE o.date BETWEEN ? AND ?
-            GROUP BY c.catid, f.fid
-        )
-        SELECT 
-            catid,
-            catname,
-            GROUP_CONCAT(fname, ', ') AS top_items
-        FROM RankedItems
-        WHERE rank = 1
-        GROUP BY catid
-        ORDER BY catname;
-    `;
+                catid,
+                catname,
+                GROUP_CONCAT(fname, ', ') AS top_items
+            FROM RankedItems
+            WHERE rank = 1
+            GROUP BY catid
+            ORDER BY catname;
+        `, [startDate, endDate]);
 
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error('Error fetching best in category data:', err);
-            event.reply('best-in-category-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            const processedRows = rows.map(row => ({
-                ...row,
-                top_items: row.top_items ? row.top_items.split(', ') : []
-            }));
-            
-            event.reply('best-in-category-response', {
-                success: true,
-                categories: processedRows
-            });
-        }
-    });
+        const processedRows = rows.map(row => ({
+            ...row,
+            top_items: row.top_items ? row.top_items.split(', ') : []
+        }));
+
+        event.reply('best-in-category-response', { success: true, categories: processedRows });
+    } catch (err) {
+        console.error('Error fetching best in category data:', err);
+        event.reply('best-in-category-response', { success: false, error: err.message });
+    }
 });
 
 ipcMain.on('get-tax-on-items', (event, { startDate, endDate }) => {
-    const query = `
-        SELECT 
-            f.fname,
-            SUM(od.quantity) as total_quantity,
-            SUM(od.quantity) * f.sgst as total_sgst,
-            SUM(od.quantity) * f.cgst as total_cgst,
-            SUM(od.quantity) * f.tax as total_tax
-        FROM Orders o
-        JOIN OrderDetails od ON o.billno = od.orderid
-        JOIN FoodItem f ON od.foodid = f.fid
-        WHERE o.date BETWEEN ? AND ?
-        GROUP BY f.fid
-        ORDER BY f.fname;
-    `;
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                f.fname,
+                SUM(od.quantity) as total_quantity,
+                SUM(od.quantity) * f.sgst as total_sgst,
+                SUM(od.quantity) * f.cgst as total_cgst,
+                SUM(od.quantity) * f.tax as total_tax
+            FROM Orders o
+            JOIN OrderDetails od ON o.billno = od.orderid
+            JOIN FoodItem f ON od.foodid = f.fid
+            WHERE o.date BETWEEN ? AND ?
+            GROUP BY f.fid
+            ORDER BY f.fname;
+        `, [startDate, endDate]);
 
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error('Error fetching tax data:', err);
-            event.reply('tax-on-items-response', { 
-                success: false, 
-                error: err.message 
-            });
-        } else {
-            event.reply('tax-on-items-response', {
-                success: true,
-                items: rows
-            });
-        }
-    });
+        event.reply('tax-on-items-response', { success: true, items: rows });
+    } catch (err) {
+        console.error('Error fetching tax data:', err);
+        event.reply('tax-on-items-response', { success: false, error: err.message });
+    }
 });
 //----------------------------------------------ANALYTICS ENDS HERE--------------------------------------------------------------
 
@@ -2168,54 +1935,31 @@ ipcMain.on('update-receipt-template', (event, updates) => {
 });
 
 ipcMain.on('get-order-for-printing', (event, billno) => {
-    // First get the order header
-    const orderQuery = `
-        SELECT * FROM Orders WHERE billno = ?;
-    `;
-    
-    // Get actual item prices from FoodItem table
-    const itemsQuery = `
-        SELECT 
-            f.fname,
-            f.cost as item_price,
-            od.quantity
-        FROM OrderDetails od
-        JOIN FoodItem f ON od.foodid = f.fid
-        WHERE od.orderid = ?;
-    `;
-    
-    db.get(orderQuery, [billno], (err, order) => {
-        if (err) {
-            console.error('Error fetching order:', err);
-            event.reply('order-for-printing-response', { error: err.message });
-            return;
-        }
-        
+    try {
+        const order = dbGetAsync(`SELECT * FROM Orders WHERE billno = ?`, [billno]);
         if (!order) {
             event.reply('order-for-printing-response', { error: 'Order not found' });
             return;
         }
-        
-        db.all(itemsQuery, [billno], (err, items) => {
-            if (err) {
-                console.error('Error fetching order items:', err);
-                event.reply('order-for-printing-response', { error: err.message });
-                return;
-            }
-            
-            // Format items with individual prices (not total prices)
-            const processedItems = items.map(item => ({
-                fname: item.fname,
-                quantity: item.quantity,
-                price: item.item_price // Individual item price, not total
-            }));
-            
-            event.reply('order-for-printing-response', { 
-                order, 
-                items: processedItems 
-            });
-        });
-    });
+
+        const items = dbAllAsync(`
+            SELECT f.fname, f.cost as item_price, od.quantity
+            FROM OrderDetails od
+            JOIN FoodItem f ON od.foodid = f.fid
+            WHERE od.orderid = ?
+        `, [billno]);
+
+        const processedItems = items.map(item => ({
+            fname: item.fname,
+            quantity: item.quantity,
+            price: item.item_price
+        }));
+
+        event.reply('order-for-printing-response', { order, items: processedItems });
+    } catch (err) {
+        console.error('Error fetching order for printing:', err);
+        event.reply('order-for-printing-response', { error: err.message });
+    }
 });
 
 ipcMain.handle('test-printer', async (_event, { vendorId, productId } = {}) => {
@@ -2293,67 +2037,58 @@ ${'-'.repeat(32)}
 //-----------------HELD ORDERS-----------------
 //DISPLAY HELD ORDERS
 ipcMain.on('get-held-orders', (event) => {
-    const heldOrdersQuery = `
-        SELECT 
-            HeldOrders.heldid, 
-            User.uname AS cashier_name, 
-            HeldOrders.price, 
-            HeldOrders.sgst, 
-            HeldOrders.cgst, 
-            HeldOrders.tax, 
-            HeldOrders.date,
-            GROUP_CONCAT(FoodItem.fname || ' (x' || HeldOrderDetails.quantity || ')', ', ') AS food_items
-        FROM HeldOrders
-        JOIN User ON HeldOrders.cashier = User.userid
-        JOIN HeldOrderDetails ON HeldOrders.heldid = HeldOrderDetails.heldid
-        JOIN FoodItem ON HeldOrderDetails.foodid = FoodItem.fid
-        GROUP BY HeldOrders.heldid
-        ORDER BY HeldOrders.heldid DESC
-    `;
-
-    db.all(heldOrdersQuery, [], (err, heldOrders) => {
-        if (err) {
-            console.error("Error fetching held orders:", err);
-            event.reply('held-orders-data', []);
-            return;
-        }
-
+    try {
+        const heldOrders = dbAllAsync(`
+            SELECT 
+                HeldOrders.heldid, 
+                User.uname AS cashier_name, 
+                HeldOrders.price, 
+                HeldOrders.sgst, 
+                HeldOrders.cgst, 
+                HeldOrders.tax, 
+                HeldOrders.date,
+                GROUP_CONCAT(FoodItem.fname || ' (x' || HeldOrderDetails.quantity || ')', ', ') AS food_items
+            FROM HeldOrders
+            JOIN User ON HeldOrders.cashier = User.userid
+            JOIN HeldOrderDetails ON HeldOrders.heldid = HeldOrderDetails.heldid
+            JOIN FoodItem ON HeldOrderDetails.foodid = FoodItem.fid
+            GROUP BY HeldOrders.heldid
+            ORDER BY HeldOrders.heldid DESC
+        `);
         event.reply('held-orders-data', heldOrders);
-    });
+    } catch (err) {
+        console.error("Error fetching held orders:", err);
+        event.reply('held-orders-data', []);
+    }
 });
-//regarding held orders:
-// Fetch held order details
+
 ipcMain.on('get-held-order-details', (event, heldId) => {
-    const query = `
-        SELECT 
-            GROUP_CONCAT(
-                FoodItem.fname || ' (x' || HeldOrderDetails.quantity || ')', ', '
-            ) AS food_items,
-            json_group_array(
-                json_object(
-                    'foodid', FoodItem.fid,
-                    'fname', FoodItem.fname,
-                    'price', FoodItem.cost,
-                    'quantity', HeldOrderDetails.quantity,
-                    'category', FoodItem.category
-                )
-            ) AS food_details
-        FROM HeldOrderDetails
-        JOIN FoodItem ON HeldOrderDetails.foodid = FoodItem.fid
-        WHERE HeldOrderDetails.heldid = ?
-    `;
+    try {
+        const orderDetails = dbGetAsync(`
+            SELECT 
+                GROUP_CONCAT(
+                    FoodItem.fname || ' (x' || HeldOrderDetails.quantity || ')', ', '
+                ) AS food_items,
+                json_group_array(
+                    json_object(
+                        'foodid', FoodItem.fid,
+                        'fname', FoodItem.fname,
+                        'price', FoodItem.cost,
+                        'quantity', HeldOrderDetails.quantity,
+                        'category', FoodItem.category
+                    )
+                ) AS food_details
+            FROM HeldOrderDetails
+            JOIN FoodItem ON HeldOrderDetails.foodid = FoodItem.fid
+            WHERE HeldOrderDetails.heldid = ?
+        `, [heldId]);
 
-    db.get(query, [heldId], (err, orderDetails) => {
-        if (err || !orderDetails) {
-            if (err) console.error("Error fetching held order details:", err);
-            event.reply('held-order-details-data', [], heldId);
-            return;
-        }
-
-        let foodDetails = orderDetails.food_details ? JSON.parse(orderDetails.food_details) : [];
-
+        let foodDetails = orderDetails?.food_details ? JSON.parse(orderDetails.food_details) : [];
         event.reply('held-order-details-data', foodDetails, heldId);
-    });
+    } catch (err) {
+        console.error("Error fetching held order details:", err);
+        event.reply('held-order-details-data', [], heldId);
+    }
 });
 
 
@@ -2368,6 +2103,7 @@ ipcMain.on('delete-held-order', async (event, heldId) => {
     } catch (err) {
         try { await dbRunAsync('ROLLBACK'); } catch (_) {}
         console.error("Error deleting held order:", err);
+        event.reply('held-order-deleted', null);
     }
 });
 
@@ -2429,26 +2165,15 @@ ipcMain.on("save-bill", async (event, orderData) => {
                 normalizedTableLabel,
             ]
         );
-        const orderId = result.lastID;
+        const orderId = result.lastInsertRowid;
 
         // Insert items into OrderDetails
-        const stmt = db.prepare(
+        const insertDetail = db.prepare(
             `INSERT INTO OrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)`
         );
         for (const { foodId, quantity } of orderItems) {
-            await new Promise((resolve, reject) => {
-                stmt.run(orderId, foodId, quantity, (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
+            insertDetail.run(orderId, foodId, quantity);
         }
-        await new Promise((resolve, reject) => {
-            stmt.finalize((err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
 
         // Check if a discount was applied and insert into DiscountedOrders
         if (calculatedTotalAmount > finalTotalAmount) {
@@ -2507,21 +2232,12 @@ ipcMain.on("hold-bill", async (event, orderData) => {
                 date,
             ]
         );
-        const orderId = result.lastID;
+        const orderId = result.lastInsertRowid;
 
-        const stmt = db.prepare(`INSERT INTO HeldOrderDetails (heldid, foodid, quantity) VALUES (?, ?, ?)`);
+        const insertDetail = db.prepare(`INSERT INTO HeldOrderDetails (heldid, foodid, quantity) VALUES (?, ?, ?)`);
         for (const { foodId, quantity } of orderItems) {
-            await new Promise((resolve, reject) => {
-                stmt.run(orderId, foodId, quantity, (err) => {
-                    if (err) reject(err); else resolve();
-                });
-            });
+            insertDetail.run(orderId, foodId, quantity);
         }
-        await new Promise((resolve, reject) => {
-            stmt.finalize((err) => {
-                if (err) reject(err); else resolve();
-            });
-        });
 
         await dbRunAsync('COMMIT');
 
@@ -2535,84 +2251,72 @@ ipcMain.on("hold-bill", async (event, orderData) => {
     }
 });
 // Fetch top selling items for a specific date range
-ipcMain.on("get-top-selling-items", async (event, { startDate, endDate }) => {
-    const query = `
-        SELECT 
-            Orders.date, 
-            FoodItem.fname AS most_sold_item,
-            SUM(OrderDetails.quantity) AS total_quantity
-        FROM Orders
-        JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        WHERE date(Orders.date) BETWEEN date(?) AND date(?)
-        GROUP BY Orders.date, OrderDetails.foodid
-        ORDER BY Orders.date, total_quantity DESC
-    `;
+ipcMain.on("get-top-selling-items", (event, { startDate, endDate }) => {
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                Orders.date, 
+                FoodItem.fname AS most_sold_item,
+                SUM(OrderDetails.quantity) AS total_quantity
+            FROM Orders
+            JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
+            JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
+            WHERE date(Orders.date) BETWEEN date(?) AND date(?)
+            GROUP BY Orders.date, OrderDetails.foodid
+            ORDER BY Orders.date, total_quantity DESC
+        `, [startDate, endDate]);
 
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error("Error fetching top selling items:", err);
-            event.reply("top-selling-items-response", { success: false, items: [] });
-            return;
-        }
-
-        // Process the results to get the most sold item(s) for each date
         const topSellingItems = {};
         rows.forEach(row => {
             if (!topSellingItems[row.date]) {
                 topSellingItems[row.date] = { most_sold_items: [row.most_sold_item], total_quantity: row.total_quantity };
             } else if (row.total_quantity === topSellingItems[row.date].total_quantity) {
-                topSellingItems[row.date].most_sold_items.push(row.most_sold_item); // Add to the list of most sold items
+                topSellingItems[row.date].most_sold_items.push(row.most_sold_item);
             } else if (row.total_quantity > topSellingItems[row.date].total_quantity) {
                 topSellingItems[row.date] = { most_sold_items: [row.most_sold_item], total_quantity: row.total_quantity };
             }
         });
 
-        // Convert the object to an array for easier processing
         const itemsArray = Object.keys(topSellingItems).map(date => ({
             date,
-            most_sold_item: topSellingItems[date].most_sold_items.join(", ") // Join items with commas
+            most_sold_item: topSellingItems[date].most_sold_items.join(", ")
         }));
 
         event.reply("top-selling-items-response", { success: true, items: itemsArray });
-    });
+    } catch (err) {
+        console.error("Error fetching top selling items:", err);
+        event.reply("top-selling-items-response", { success: false, items: [] });
+    }
 });
 
 //------------------------------BILLING ENDS HERE--------------------------------
 //---------------------------------HISTORY TAB-------------------------------------
 // Fetch Today's Orders
 ipcMain.on("get-todays-orders", (event) => {
-    
-    const query = `
-        SELECT 
-            Orders.*, 
-            COALESCE(Orders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
-            User.uname AS cashier_name, 
-            GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
-        FROM Orders
-        LEFT JOIN User ON Orders.cashier = User.userid
-        LEFT JOIN DiningTable ON Orders.table_id = DiningTable.table_id
-        LEFT JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        LEFT JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        WHERE date(Orders.date) = date('now', 'localtime')
-        GROUP BY Orders.billno
-        ORDER BY Orders.billno DESC;
-
-    `;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching today's orders:", err);
-            event.reply("todays-orders-response", { success: false, orders: [] });
-            return;
-        }
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                Orders.*, 
+                COALESCE(Orders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
+                User.uname AS cashier_name, 
+                GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
+            FROM Orders
+            LEFT JOIN User ON Orders.cashier = User.userid
+            LEFT JOIN DiningTable ON Orders.table_id = DiningTable.table_id
+            LEFT JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
+            LEFT JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
+            WHERE date(Orders.date) = date('now', 'localtime')
+            GROUP BY Orders.billno
+            ORDER BY Orders.billno DESC
+        `);
         event.reply("todays-orders-response", { success: true, orders: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching today's orders:", err);
+        event.reply("todays-orders-response", { success: false, orders: [] });
+    }
 });
 
-// Listen for order history requests
 ipcMain.on("get-order-history", (event, data) => {
-    // Add safety check to prevent destructuring undefined
     if (!data) {
         console.error("No data provided for get-order-history");
         event.reply("order-history-response", { success: false, orders: [], message: "No data provided" });
@@ -2627,41 +2331,36 @@ ipcMain.on("get-order-history", (event, data) => {
         return;
     }
 
-    let query = `
-        SELECT 
-            Orders.*, 
-            COALESCE(Orders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
-            User.uname AS cashier_name, 
-            GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
-        FROM Orders
-        LEFT JOIN User ON Orders.cashier = User.userid
-        LEFT JOIN DiningTable ON Orders.table_id = DiningTable.table_id
-        LEFT JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
-        LEFT JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        WHERE date(Orders.date) BETWEEN date(?) AND date(?)
-    `;
+    try {
+        let query = `
+            SELECT 
+                Orders.*, 
+                COALESCE(Orders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
+                User.uname AS cashier_name, 
+                GROUP_CONCAT(FoodItem.fname || ' (x' || OrderDetails.quantity || ')', ', ') AS food_items
+            FROM Orders
+            LEFT JOIN User ON Orders.cashier = User.userid
+            LEFT JOIN DiningTable ON Orders.table_id = DiningTable.table_id
+            LEFT JOIN OrderDetails ON Orders.billno = OrderDetails.orderid
+            LEFT JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
+            WHERE date(Orders.date) BETWEEN date(?) AND date(?)
+        `;
 
-    const params = [startDate, endDate];
-    const normalizedTableId = Number(tableId);
-    if (Number.isInteger(normalizedTableId) && normalizedTableId > 0) {
-        query += ' AND Orders.table_id = ?';
-        params.push(normalizedTableId);
-    }
-
-    query += `
-        GROUP BY Orders.billno
-        ORDER BY Orders.date DESC;
-    `;
-
-    db.all(query, params, (err, rows) => {
-        if (err) {
-            console.error("Error fetching order history:", err);
-            event.reply("order-history-response", { success: false, orders: [], message: err.message });
-            return;
+        const params = [startDate, endDate];
+        const normalizedTableId = Number(tableId);
+        if (Number.isInteger(normalizedTableId) && normalizedTableId > 0) {
+            query += ' AND Orders.table_id = ?';
+            params.push(normalizedTableId);
         }
-        //console.log("Order history fetched:", rows); 
+
+        query += ` GROUP BY Orders.billno ORDER BY Orders.date DESC`;
+
+        const rows = dbAllAsync(query, params);
         event.reply("order-history-response", { success: true, orders: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching order history:", err);
+        event.reply("order-history-response", { success: false, orders: [], message: err.message });
+    }
 });
 
 ipcMain.on("update-order", async (event, { billno, orderItems }) => {
@@ -2684,9 +2383,7 @@ ipcMain.on("update-order", async (event, { billno, orderItems }) => {
         for (const { foodId, quantity } of orderItems) {
             const item = await dbGetAsync("SELECT cost, sgst, cgst, tax FROM FoodItem WHERE fid = ?", [foodId]);
             if (!item) {
-                await dbRunAsync('ROLLBACK');
-                event.reply("update-order-response", { success: false, message: `Food item ${foodId} not found.` });
-                return;
+                throw new Error(`Food item ${foodId} not found.`);
             }
             const itemTotal = item.cost * quantity;
             totalPrice += itemTotal;
@@ -2697,19 +2394,10 @@ ipcMain.on("update-order", async (event, { billno, orderItems }) => {
 
         // Update OrderDetails: delete all then re-insert
         await dbRunAsync("DELETE FROM OrderDetails WHERE orderid = ?", [billno]);
-        const stmt = db.prepare("INSERT INTO OrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)");
+        const insertDetail = db.prepare("INSERT INTO OrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)");
         for (const { foodId, quantity } of orderItems) {
-            await new Promise((resolve, reject) => {
-                stmt.run(billno, foodId, quantity, (err) => {
-                    if (err) reject(err); else resolve();
-                });
-            });
+            insertDetail.run(billno, foodId, quantity);
         }
-        await new Promise((resolve, reject) => {
-            stmt.finalize((err) => {
-                if (err) reject(err); else resolve();
-            });
-        });
 
         // Update order totals
         await dbRunAsync(
@@ -2799,213 +2487,147 @@ ipcMain.on("confirm-delete-order", async (event, { billNo, reason, source }) => 
 });
 
 ipcMain.on("get-categories-event", (event) => {
-
-    const query = `SELECT catid, catname FROM Category WHERE active = 1`;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching categories:", err);
-            event.reply("categories-response", { success: false, categories: [] });
-            return;
-        }
+    try {
+        const rows = dbAllAsync(`SELECT catid, catname FROM Category WHERE active = 1`);
         event.reply("categories-response", { success: true, categories: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching categories:", err);
+        event.reply("categories-response", { success: false, categories: [] });
+    }
 });
 
-// Listens for deleted order requests, retrieves the deleted orders from the DeletedOrders table and sends records back in response
 ipcMain.on("get-deleted-orders", (event, { startDate, endDate }) => {
-
-    const query = `
-        SELECT 
-            DeletedOrders.*, 
-            COALESCE(DeletedOrders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
-            User.uname AS cashier_name, 
-            GROUP_CONCAT(FoodItem.fname || ' (x' || DeletedOrderDetails.quantity || ')', ', ') AS food_items
-        FROM DeletedOrders
-        JOIN User ON DeletedOrders.cashier = User.userid
-        LEFT JOIN DiningTable ON DeletedOrders.table_id = DiningTable.table_id
-        JOIN DeletedOrderDetails ON DeletedOrders.billno = DeletedOrderDetails.orderid
-        JOIN FoodItem ON DeletedOrderDetails.foodid = FoodItem.fid
-        WHERE date(DeletedOrders.date) BETWEEN date(?) AND date(?)
-        GROUP BY DeletedOrders.billno
-        ORDER BY DeletedOrders.date DESC
-    `;
-
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error("Error fetching deleted orders:", err);
-            event.reply("deleted-orders-response", { success: false, orders: [], message: err.message });
-            return;
-        }
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                DeletedOrders.*, 
+                COALESCE(DeletedOrders.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
+                User.uname AS cashier_name, 
+                GROUP_CONCAT(FoodItem.fname || ' (x' || DeletedOrderDetails.quantity || ')', ', ') AS food_items
+            FROM DeletedOrders
+            JOIN User ON DeletedOrders.cashier = User.userid
+            LEFT JOIN DiningTable ON DeletedOrders.table_id = DiningTable.table_id
+            JOIN DeletedOrderDetails ON DeletedOrders.billno = DeletedOrderDetails.orderid
+            JOIN FoodItem ON DeletedOrderDetails.foodid = FoodItem.fid
+            WHERE date(DeletedOrders.date) BETWEEN date(?) AND date(?)
+            GROUP BY DeletedOrders.billno
+            ORDER BY DeletedOrders.date DESC
+        `, [startDate, endDate]);
         event.reply("deleted-orders-response", { success: true, orders: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching deleted orders:", err);
+        event.reply("deleted-orders-response", { success: false, orders: [], message: err.message });
+    }
 });
 
-ipcMain.handle("show-save-dialog", async (event, defaultFilename) => {
-    const result = await dialog.showSaveDialog({
-        title: "Save Excel File",
-        defaultPath: defaultFilename,
-        filters: [
-            { name: "Excel Files", extensions: ["xlsx"] },
-            { name: "All Files", extensions: ["*"] },
-        ],
-    });
-
-    // result.filePath is null if the user cancels the dialog
-    return result.canceled ? null : result.filePath;
-});
-// Fetch Customers
-ipcMain.on("get-customers", (event) => {
-    const query = `
-        SELECT * FROM Customer
-        ORDER BY cid ASC
-    `;
-
-    db.all(query, [], (err, rows) => {
-        if (err) {
-            console.error("Error fetching customers:", err);
-            event.reply("customers-response", { success: false, customers: [] });
-            return;
-        }
-        event.reply("customers-response", { success: true, customers: rows });
-    });
-});
-
-// Clear Deleted Orders
 ipcMain.on("clear-deleted-orders", (event) => {
-    const deleteOrdersQuery = `DELETE FROM DeletedOrders`;
-    const deleteOrderDetailsQuery = `DELETE FROM DeletedOrderDetails`;
-
-    db.serialize(() => {
-        db.run(deleteOrderDetailsQuery, [], (err) => {
-            if (err) {
-                console.error("Error clearing DeletedOrderDetails:", err);
-                event.reply("clear-deleted-orders-response", { success: false });
-                return;
-            }
-            db.run(deleteOrdersQuery, [], (err) => {
-                if (err) {
-                    console.error("Error clearing DeletedOrders:", err);
-                    event.reply("clear-deleted-orders-response", { success: false });
-                    return;
-                }
-                event.reply("clear-deleted-orders-response", { success: true });
-            });
-        });
-    });
+    try {
+        db.prepare(`DELETE FROM DeletedOrderDetails`).run();
+        db.prepare(`DELETE FROM DeletedOrders`).run();
+        event.reply("clear-deleted-orders-response", { success: true });
+    } catch (err) {
+        console.error("Error clearing DeletedOrders:", err);
+        event.reply("clear-deleted-orders-response", { success: false });
+    }
 });
 
 ipcMain.on("get-discounted-orders", (event, { startDate, endDate }) => {
-    const query = `
-        SELECT 
-            d.billno, 
-            o.kot, 
-            o.date,
-            COALESCE(o.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
-            d.Initial_price, 
-            d.discount_percentage, 
-            d.discount_amount, 
-            o.price AS Final_Price,
-            GROUP_CONCAT(f.fname, ', ') AS food_items
-        FROM DiscountedOrders d
-        JOIN Orders o ON d.billno = o.billno
-        LEFT JOIN DiningTable ON o.table_id = DiningTable.table_id
-        LEFT JOIN OrderDetails od ON d.billno = od.orderid
-        LEFT JOIN FoodItem f ON od.foodid = f.fid
-        WHERE date(o.date) BETWEEN date(?) AND date(?)
-        GROUP BY d.billno, o.kot, o.date, d.Initial_price, d.discount_percentage, d.discount_amount
-    `;
-
-    db.all(query, [startDate, endDate], (err, rows) => {
-        if (err) {
-            console.error("Error fetching discounted orders:", err);
-            event.reply("discounted-orders-response", { success: false, orders: [] });
-            return;
-        }
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                d.billno, 
+                o.kot, 
+                o.date,
+                COALESCE(o.table_label, DiningTable.table_number || ' - ' || DiningTable.table_name) AS table_label,
+                d.Initial_price, 
+                d.discount_percentage, 
+                d.discount_amount, 
+                o.price AS Final_Price,
+                GROUP_CONCAT(f.fname, ', ') AS food_items
+            FROM DiscountedOrders d
+            JOIN Orders o ON d.billno = o.billno
+            LEFT JOIN DiningTable ON o.table_id = DiningTable.table_id
+            LEFT JOIN OrderDetails od ON d.billno = od.orderid
+            LEFT JOIN FoodItem f ON od.foodid = f.fid
+            WHERE date(o.date) BETWEEN date(?) AND date(?)
+            GROUP BY d.billno, o.kot, o.date, d.Initial_price, d.discount_percentage, d.discount_amount
+        `, [startDate, endDate]);
         event.reply("discounted-orders-response", { success: true, orders: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching discounted orders:", err);
+        event.reply("discounted-orders-response", { success: false, orders: [] });
+    }
 });
 
-// Clear Discounted Orders
 ipcMain.on("clear-discounted-orders", (event) => {
-    const deleteDiscountedOrdersQuery = `DELETE FROM DiscountedOrders`;
-
-    db.run(deleteDiscountedOrdersQuery, [], (err) => {
-        if (err) {
-            console.error("Error clearing DiscountedOrders:", err);
-            event.reply("clear-discounted-orders-response", { success: false });
-            return;
-        }
+    try {
+        db.prepare(`DELETE FROM DiscountedOrders`).run();
         event.reply("clear-discounted-orders-response", { success: true });
-    });
+    } catch (err) {
+        console.error("Error clearing DiscountedOrders:", err);
+        event.reply("clear-discounted-orders-response", { success: false });
+    }
 });
 
-// IPC Listener to add a new customer
+ipcMain.on("get-customers", (event) => {
+    try {
+        const rows = dbAllAsync(`SELECT * FROM Customer ORDER BY cid ASC`);
+        event.reply("customers-response", { success: true, customers: rows });
+    } catch (err) {
+        console.error("Error fetching customers:", err);
+        event.reply("customers-response", { success: false, customers: [] });
+    }
+});
+
 ipcMain.on("add-customer", (event, customerData) => {
-    const { cname, phone, address } = customerData;
-
-    const query = `INSERT INTO Customer (cname, phone, address) VALUES (?, ?, ?)`;
-    db.run(query, [cname, phone, address], function (err) {
-        if (err) {
-            console.error("Error adding customer:", err);
-            event.reply("customer-added-response", { success: false });
-        } else {
-            console.log("Customer added successfully");
-            event.reply("customer-added-response", { success: true });
-        }
-    });
+    try {
+        const { cname, phone, address } = customerData;
+        db.prepare(`INSERT INTO Customer (cname, phone, address) VALUES (?, ?, ?)`).run(cname, phone, address);
+        event.reply("customer-added-response", { success: true });
+    } catch (err) {
+        console.error("Error adding customer:", err);
+        event.reply("customer-added-response", { success: false });
+    }
 });
 
-// Handle Delete Customer
 ipcMain.on("delete-customer", (event, { customerId }) => {
-    db.run("DELETE FROM Customer WHERE cid = ?", [customerId], function (err) {
-        if (err) {
-            console.error("Error deleting customer:", err);
-            event.reply("customer-delete-response", { success: false });
-        } else {
-            console.log("Customer deleted successfully");
-            event.reply("customer-delete-response", { success: true });
-        }
-    });
+    try {
+        db.prepare("DELETE FROM Customer WHERE cid = ?").run(customerId);
+        event.reply("customer-delete-response", { success: true });
+    } catch (err) {
+        console.error("Error deleting customer:", err);
+        event.reply("customer-delete-response", { success: false });
+    }
 });
 
-// Handle Update Customer
 ipcMain.on("update-customer", (event, updatedCustomer) => {
-    const { cid, cname, phone, address } = updatedCustomer;
-    db.run(
-        "UPDATE Customer SET cname = ?, phone = ?, address = ? WHERE cid = ?",
-        [cname, phone, address, cid],
-        function (err) {
-            if (err) {
-                console.error("Error updating customer:", err);
-                event.reply("update-customer-response", { success: false, error: err.message });
-                return;
-            }
-            event.reply("update-customer-response", { success: true });
-        }
-    );
+    try {
+        const { cid, cname, phone, address } = updatedCustomer;
+        db.prepare("UPDATE Customer SET cname = ?, phone = ?, address = ? WHERE cid = ?").run(cname, phone, address, cid);
+        event.reply("update-customer-response", { success: true });
+    } catch (err) {
+        console.error("Error updating customer:", err);
+        event.reply("update-customer-response", { success: false, error: err.message });
+    }
 });
-// Fetch order details for a specific bill number
-ipcMain.on("get-order-details", (event, billno) => {
-    const query = `
-        SELECT 
-            OrderDetails.foodid AS foodId,
-            FoodItem.fname AS foodName,
-            FoodItem.cost AS price,
-            OrderDetails.quantity AS quantity
-        FROM OrderDetails
-        JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
-        WHERE OrderDetails.orderid = ?
-    `;
 
-    db.all(query, [billno], (err, rows) => {
-        if (err) {
-            console.error("Error fetching order details:", err);
-            event.reply("order-details-response", { food_items: [] });
-            return;
-        }
+ipcMain.on("get-order-details", (event, billno) => {
+    try {
+        const rows = dbAllAsync(`
+            SELECT 
+                OrderDetails.foodid AS foodId,
+                FoodItem.fname AS foodName,
+                FoodItem.cost AS price,
+                OrderDetails.quantity AS quantity
+            FROM OrderDetails
+            JOIN FoodItem ON OrderDetails.foodid = FoodItem.fid
+            WHERE OrderDetails.orderid = ?
+        `, [billno]);
         event.reply("order-details-response", { food_items: rows });
-    });
+    } catch (err) {
+        console.error("Error fetching order details:", err);
+        event.reply("order-details-response", { food_items: [] });
+    }
 });
 
 //----------------------------------------------SETTINGS TAB ENDS HERE--------------------------------------------
@@ -3015,37 +2637,24 @@ let categoryOrderStore = new Store({ name: 'category-order' });
 
 // Modified get-categories handler to respect custom order
 ipcMain.handle("get-categories", async () => {
-    return new Promise((resolve, reject) => {
-        db.all("SELECT catid, catname FROM Category WHERE active = 1", [], (err, rows) => {
-            if (err) {
-                reject(err);
+    const rows = dbAllAsync("SELECT catid, catname FROM Category WHERE active = 1");
+    const customOrder = categoryOrderStore.get('order', []);
+
+    if (customOrder.length > 0) {
+        const orderedCategories = [];
+        const unorderedCategories = [];
+        rows.forEach(category => {
+            const index = customOrder.indexOf(category.catname);
+            if (index !== -1) {
+                orderedCategories[index] = category;
             } else {
-                // Get custom order if exists
-                const customOrder = categoryOrderStore.get('order', []);
-                
-                if (customOrder.length > 0) {
-                    // Sort categories according to custom order
-                    const orderedCategories = [];
-                    const unorderedCategories = [];
-                    
-                    rows.forEach(category => {
-                        const index = customOrder.indexOf(category.catname);
-                        if (index !== -1) {
-                            orderedCategories[index] = category;
-                        } else {
-                            unorderedCategories.push(category);
-                        }
-                    });
-                    
-                    // Remove undefined slots and combine with unordered categories
-                    const filteredOrdered = orderedCategories.filter(cat => cat !== undefined);
-                    resolve([...filteredOrdered, ...unorderedCategories]);
-                } else {
-                    resolve(rows);
-                }
+                unorderedCategories.push(category);
             }
         });
-    });
+        const filteredOrdered = orderedCategories.filter(cat => cat !== undefined);
+        return [...filteredOrdered, ...unorderedCategories];
+    }
+    return rows;
 });
 //----------------------------------------------MENU TAB STARTS HERE ----------------------------------------------------------
 // Update the IPC handler in main.js with better error handling
@@ -3055,66 +2664,32 @@ ipcMain.handle("get-menu-items", async () => {
             throw new Error("Database not connected");
         }
 
-        const foodQuery = `
+        const foodItems = dbAllAsync(`
             SELECT 
                 f.fid, f.fname, f.category, f.cost, 
                 f.sgst, f.cgst, f.veg, f.is_on, f.active,
                 c.catname AS category_name
             FROM FoodItem f
-            JOIN Category c ON f.category = c.catid;
-        `;
-
-        // Wrap in try-catch and improve error messages
-        const foodItems = await new Promise((resolve, reject) => {
-            db.all(foodQuery, (err, rows) => {
-                if (err) {
-                    console.error("[Food Query] SQL Error:", err.message);
-                    reject(new Error(`Food query failed: ${err.message}`));
-                } else {
-                    resolve(rows);
-                }
-            });
-        });
+            JOIN Category c ON f.category = c.catid
+        `);
 
         console.log("✅ Successfully fetched food items:", foodItems.length);
         return foodItems;
-
     } catch (err) {
         console.error("❌ Error in get-menu-items handler:", err);
         throw new Error(`Failed to fetch menu items: ${err.message || err}`);
     }
 });
 
-// Toggle menu items - DAILY TOGGLE ON/OFF:
 ipcMain.handle("toggle-menu-item", async (event, fid) => {
     try {
-        await new Promise((resolve, reject) => {
-            db.run(
-                `
-                UPDATE FoodItem 
-                SET is_on = CASE WHEN is_on = 1 THEN 0 ELSE 1 END
-                WHERE fid = ?
-                `,
-                [fid],
-                function (err) {
-                    if (err) {
-                        console.error("Error toggling item:", err);
-                        reject(err);
-                    } else {
-                        resolve(true);
-                    }
-                }
-            );
-        });
+        db.prepare(`
+            UPDATE FoodItem 
+            SET is_on = CASE WHEN is_on = 1 THEN 0 ELSE 1 END
+            WHERE fid = ?
+        `).run(fid);
 
-        // Fetch updated value
-        const updatedItem = await new Promise((resolve, reject) => {
-            db.get("SELECT is_on FROM FoodItem WHERE fid = ?", [fid], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
+        const updatedItem = db.prepare("SELECT is_on FROM FoodItem WHERE fid = ?").get(fid);
         return updatedItem ? updatedItem.is_on : null;
     } catch (err) {
         console.error("Error toggling menu item:", err);
@@ -3122,36 +2697,15 @@ ipcMain.handle("toggle-menu-item", async (event, fid) => {
     }
 });
 
-// Toggle menu items - ACTIVE TOGGLE:
 ipcMain.handle("toggle-menu-item-active", async (event, fid) => {
     try {
-        await new Promise((resolve, reject) => {
-            db.run(
-                `
-                UPDATE FoodItem 
-                SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END
-                WHERE fid = ?
-                `,
-                [fid],
-                function (err) {
-                    if (err) {
-                        console.error("Error toggling active state:", err);
-                        reject(err);
-                    } else {
-                        resolve(true);
-                    }
-                }
-            );
-        });
+        db.prepare(`
+            UPDATE FoodItem 
+            SET active = CASE WHEN active = 1 THEN 0 ELSE 1 END
+            WHERE fid = ?
+        `).run(fid);
 
-        // Fetch updated value
-        const updatedItem = await new Promise((resolve, reject) => {
-            db.get("SELECT active FROM FoodItem WHERE fid = ?", [fid], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
+        const updatedItem = db.prepare("SELECT active FROM FoodItem WHERE fid = ?").get(fid);
         return updatedItem ? updatedItem.active : null;
     } catch (err) {
         console.error("Error toggling active state:", err);
@@ -3159,20 +2713,9 @@ ipcMain.handle("toggle-menu-item-active", async (event, fid) => {
     }
 });
 
-// Delete Menu Item
 ipcMain.handle("delete-menu-item", async (event, fid) => {
     try {
-        await new Promise((resolve, reject) => {
-            db.run("DELETE FROM FoodItem WHERE fid = ?", [fid], function (err) {
-                if (err) {
-                    console.error("Error deleting item:", err);
-                    reject(err);
-                } else {
-                    resolve(true);
-                }
-            });
-        });
-
+        db.prepare("DELETE FROM FoodItem WHERE fid = ?").run(fid);
         return true;
     } catch (err) {
         console.error("Error deleting menu item:", err);
@@ -3197,25 +2740,8 @@ ipcMain.handle("update-food-item", async (event, { fid, fname, category, cost, s
 
 // Handle fetching categories for dropdowns
 ipcMain.handle("get-categories-for-additem", async () => {
-    try {
-        if (!db) throw new Error("Database not connected");
-
-        const query = "SELECT catid, catname, active FROM Category ORDER BY catname";
-        
-        return await new Promise((resolve, reject) => {
-            db.all(query, (err, rows) => {
-                if (err) {
-                    console.error("Database error fetching categories:", err);
-                    reject(err);
-                } else {
-                    resolve(rows);
-                }
-            });
-        });
-    } catch (err) {
-        console.error("Error in get-categories-for-additem handler:", err);
-        throw err;
-    }
+    if (!db) throw new Error("Database not connected");
+    return dbAllAsync("SELECT catid, catname, active FROM Category ORDER BY catname");
 });
 
 ipcMain.handle('create-category', async (event, payload = {}) => {
@@ -3321,49 +2847,35 @@ ipcMain.handle('toggle-category-active', async (event, payload = {}) => {
 });
 // Add new food item
 ipcMain.handle("add-food-item", async (event, item) => {
-    return new Promise((resolve, reject) => {
-        db.run(
-            `INSERT INTO FoodItem (fname, category, cost, sgst, cgst, tax, active, is_on, veg)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                item.fname,
-                item.category,
-                item.cost,
-                item.sgst,
-                item.cgst,
-                item.tax,
-                item.active,
-                item.is_on,
-                item.veg
-            ],
-            function (err) {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve({ success: true, fid: this.lastID });
-                }
-            }
-        );
-    });
+    const result = db.prepare(
+        `INSERT INTO FoodItem (fname, category, cost, sgst, cgst, tax, active, is_on, veg)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+        item.fname,
+        item.category,
+        item.cost,
+        item.sgst,
+        item.cgst,
+        item.tax,
+        item.active,
+        item.is_on,
+        item.veg
+    );
+    return { success: true, fid: result.lastInsertRowid };
 });
 
 // Bulk update food items
 ipcMain.handle('bulk-update-food-items', async (event, updates) => {
-    return new Promise((resolve, reject) => {
-        db.serialize(() => {
-            db.run("BEGIN TRANSACTION");
-            
-            let completed = 0;
-            let errors = [];
-            
-            updates.forEach(update => {
-                const query = `
-                    UPDATE FoodItem 
-                    SET fname = ?, category = ?, cost = ?, sgst = ?, cgst = ?, tax = ?, veg = ?, active = ?
-                    WHERE fid = ?
-                `;
-                
-                db.run(query, [
+    try {
+        const updateStmt = db.prepare(`
+            UPDATE FoodItem 
+            SET fname = ?, category = ?, cost = ?, sgst = ?, cgst = ?, tax = ?, veg = ?, active = ?
+            WHERE fid = ?
+        `);
+
+        const runAll = db.transaction((items) => {
+            for (const update of items) {
+                updateStmt.run(
                     update.fname,
                     update.category,
                     update.cost,
@@ -3373,50 +2885,28 @@ ipcMain.handle('bulk-update-food-items', async (event, updates) => {
                     update.veg,
                     update.active,
                     update.fid
-                ], function(err) {
-                    completed++;
-                    
-                    if (err) {
-                        errors.push(`Item ${update.fid}: ${err.message}`);
-                    }
-                    
-                    if (completed === updates.length) {
-                        if (errors.length > 0) {
-                            db.run("ROLLBACK");
-                            resolve({ success: false, error: errors.join(', ') });
-                        } else {
-                            db.run("COMMIT");
-                            resolve({ success: true, updatedCount: updates.length });
-                        }
-                    }
-                });
-            });
+                );
+            }
         });
-    });
+
+        runAll(updates);
+        return { success: true, updatedCount: updates.length };
+    } catch (err) {
+        console.error('Bulk update failed:', err);
+        return { success: false, error: err.message };
+    }
 });
 
 //----------------------------------------------MENU TAB ENDS HERE ------------------------------------------------------------
 
 //----------------------------------------------HOME TAB STARTS HERE ----------------------------------------------------------
 ipcMain.handle("get-all-food-items", async () => {
-    return new Promise((resolve, reject) => {
-        const query = `
-            SELECT f.fid, f.fname, f.cost, f.veg, f.category 
-            FROM FoodItem f 
-            JOIN Category c ON f.category = c.catid
-            WHERE f.active = 1 
-            AND f.is_on = 1 
-            AND c.active = 1;
-
-        `;
-        db.all(query, [], (err, rows) => {
-            if (err) {
-                reject(err);
-            } else {
-                resolve(rows);
-            }
-        });
-    });
+    return dbAllAsync(`
+        SELECT f.fid, f.fname, f.cost, f.veg, f.category 
+        FROM FoodItem f 
+        JOIN Category c ON f.category = c.catid
+        WHERE f.active = 1 AND f.is_on = 1 AND c.active = 1
+    `);
 });
 
 //-0--------------------HOME TAB ENDS HERE--------------------------------------------------------------------------------
@@ -3426,109 +2916,65 @@ const itemOrderStore = new Store({ name: 'item-order' });
 
 // Get food items with custom order
 ipcMain.handle("get-food-items-with-order", async (event, categoryName) => {
-    return new Promise((resolve, reject) => {
-        const query = `
-            SELECT f.fid, f.fname, f.cost, f.veg, f.category 
-            FROM FoodItem f 
-            JOIN Category c ON f.category = c.catid 
-            WHERE c.catname = ? AND f.active = 1 AND f.is_on = 1
-        `;
-        
-        db.all(query, [categoryName], (err, rows) => {
-            if (err) {
-                reject(err);
+    const rows = dbAllAsync(`
+        SELECT f.fid, f.fname, f.cost, f.veg, f.category 
+        FROM FoodItem f 
+        JOIN Category c ON f.category = c.catid 
+        WHERE c.catname = ? AND f.active = 1 AND f.is_on = 1
+    `, [categoryName]);
+
+    const customOrder = itemOrderStore.get(categoryName, []);
+    if (customOrder.length > 0) {
+        const orderedItems = [];
+        const unorderedItems = [];
+        rows.forEach(item => {
+            const index = customOrder.indexOf(item.fid);
+            if (index !== -1) {
+                orderedItems[index] = item;
             } else {
-                // Get custom order if exists
-                const customOrder = itemOrderStore.get(categoryName, []);
-                
-                if (customOrder.length > 0) {
-                    // Sort items according to custom order
-                    const orderedItems = [];
-                    const unorderedItems = [];
-                    
-                    rows.forEach(item => {
-                        const index = customOrder.indexOf(item.fid);
-                        if (index !== -1) {
-                            orderedItems[index] = item;
-                        } else {
-                            unorderedItems.push(item);
-                        }
-                    });
-                    
-                    // Remove undefined slots and combine with unordered items
-                    const filteredOrdered = orderedItems.filter(item => item !== undefined);
-                    resolve([...filteredOrdered, ...unorderedItems]);
-                } else {
-                    resolve(rows);
-                }
+                unorderedItems.push(item);
             }
         });
-    });
+        const filteredOrdered = orderedItems.filter(item => item !== undefined);
+        return [...filteredOrdered, ...unorderedItems];
+    }
+    return rows;
 });
 
-// Save item order
 ipcMain.handle("save-item-order", async (event, categoryName, itemOrder) => {
-    return new Promise((resolve, reject) => {
-        try {
-            itemOrderStore.set(categoryName, itemOrder);
-            resolve({ success: true });
-        } catch (error) {
-            reject(error);
-        }
-    });
+    itemOrderStore.set(categoryName, itemOrder);
+    return { success: true };
 });
 
-// Reset item order
 ipcMain.handle("reset-item-order", async (event, categoryName) => {
-    return new Promise((resolve, reject) => {
-        try {
-            itemOrderStore.delete(categoryName);
-            resolve({ success: true });
-        } catch (error) {
-            reject(error);
-        }
-    });
+    itemOrderStore.delete(categoryName);
+    return { success: true };
 });
 
 ipcMain.handle("get-food-items", async (event, categoryName) => {
-    return new Promise((resolve, reject) => {
-        const query = `
-            SELECT f.fid, f.fname, f.cost, f.veg, f.category 
-            FROM FoodItem f 
-            JOIN Category c ON f.category = c.catid 
-            WHERE c.catname = ? AND f.active = 1 AND f.is_on = 1
-        `;
-        
-        db.all(query, [categoryName], (err, rows) => {
-            if (err) {
-                reject(err);
+    const rows = dbAllAsync(`
+        SELECT f.fid, f.fname, f.cost, f.veg, f.category 
+        FROM FoodItem f 
+        JOIN Category c ON f.category = c.catid 
+        WHERE c.catname = ? AND f.active = 1 AND f.is_on = 1
+    `, [categoryName]);
+
+    const customOrder = itemOrderStore.get(categoryName, []);
+    if (customOrder.length > 0) {
+        const orderedItems = [];
+        const unorderedItems = [];
+        rows.forEach(item => {
+            const index = customOrder.indexOf(item.fid);
+            if (index !== -1) {
+                orderedItems[index] = item;
             } else {
-                // Get custom order if exists
-                const customOrder = itemOrderStore.get(categoryName, []);
-                
-                if (customOrder.length > 0) {
-                    // Sort items according to custom order
-                    const orderedItems = [];
-                    const unorderedItems = [];
-                    
-                    rows.forEach(item => {
-                        const index = customOrder.indexOf(item.fid);
-                        if (index !== -1) {
-                            orderedItems[index] = item;
-                        } else {
-                            unorderedItems.push(item);
-                        }
-                    });
-                    
-                    // Remove undefined slots and combine with unordered items
-                    const filteredOrdered = orderedItems.filter(item => item !== undefined);
-                    resolve([...filteredOrdered, ...unorderedItems]);
-                } else {
-                    resolve(rows);
-                }
+                unorderedItems.push(item);
             }
         });
-    });
+        const filteredOrdered = orderedItems.filter(item => item !== undefined);
+        return [...filteredOrdered, ...unorderedItems];
+    }
+    return rows;
 });
 
 // ADD FOOD ITEM IN MENU APP
@@ -3816,247 +3262,222 @@ ipcMain.on('restore-database-local', async (event) => {
 // ---------------------------------- BACKUP AND RESTORE SECTION ENDS HERE -------------------
 //----------------------------------- Packaging Code --------------------------------------
 function initializeSchema() {
-    return new Promise((resolve, reject) => {
-        db.serialize(() => {
-      db.run(`CREATE TABLE IF NOT EXISTS Category (
-        catid INTEGER PRIMARY KEY AUTOINCREMENT,
-        catname TEXT NOT NULL,
-        active INTEGER NOT NULL
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS Customer (
-        cid INTEGER PRIMARY KEY AUTOINCREMENT,
-        cname TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        address TEXT
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS User (
-        userid INTEGER PRIMARY KEY AUTOINCREMENT,
-        uname TEXT NOT NULL,
-        username TEXT NOT NULL,
-                email TEXT NOT NULL,
-                password_hash TEXT,
-                pin_hash TEXT,
-                is_admin INTEGER NOT NULL DEFAULT 0,
-                active INTEGER NOT NULL DEFAULT 1
-      )`);
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS Category (
+            catid INTEGER PRIMARY KEY AUTOINCREMENT,
+            catname TEXT NOT NULL,
+            active INTEGER NOT NULL
+        );
 
-            db.run(`CREATE TABLE IF NOT EXISTS AppSetup (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                is_initialized INTEGER NOT NULL DEFAULT 0,
-                activation_key TEXT,
-                tenant_id TEXT,
-                tenant_name TEXT,
-                tenant_location TEXT,
-                contact_name TEXT,
-                contact_phone TEXT,
-                contact_email TEXT,
-                contact_address TEXT,
-                master_pin_hash TEXT,
-                app_instance_id TEXT,
-                app_version TEXT,
-                platform TEXT,
-                arch TEXT,
-                remote_project_url TEXT,
-                remote_anon_key TEXT,
-                activated_at TEXT,
-                updated_at TEXT
-            )`);
+        CREATE TABLE IF NOT EXISTS Customer (
+            cid INTEGER PRIMARY KEY AUTOINCREMENT,
+            cname TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            address TEXT
+        );
 
-            db.run(`CREATE TABLE IF NOT EXISTS ActivationKey (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key_code TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'available',
-                used_by_tenant_id TEXT,
-                used_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                CHECK (status IN ('available', 'reserved', 'used', 'revoked'))
-            )`);
+        CREATE TABLE IF NOT EXISTS User (
+            userid INTEGER PRIMARY KEY AUTOINCREMENT,
+            uname TEXT NOT NULL,
+            username TEXT NOT NULL,
+            email TEXT NOT NULL,
+            password_hash TEXT,
+            pin_hash TEXT,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1
+        );
 
-            db.run(`INSERT OR IGNORE INTO ActivationKey (key_code, status) VALUES
-                ('LCP7F-3K9QW-2M8DX-5R4TN-00001', 'available'),
-                ('LCP4J-8V2NP-6Q5XT-9H3RA-00002', 'available'),
-                ('LCP9M-1C7LK-4Z8YD-2F6WS-00003', 'available'),
-                ('LCP5X-6R3HJ-9B1QT-7N4PD-00004', 'available'),
-                ('LCP8A-2W5VF-3N9CM-6K7ZX-00005', 'available')`);
-  
-            db.run(`CREATE TABLE IF NOT EXISTS FoodItem (
-        fid INTEGER PRIMARY KEY AUTOINCREMENT,
-        fname TEXT NOT NULL,
-        category INTEGER NOT NULL,
-        cost NUMERIC NOT NULL,
-        sgst NUMERIC NOT NULL DEFAULT 0,
-        cgst NUMERIC NOT NULL DEFAULT 0,
-        tax NUMERIC NOT NULL DEFAULT 0,
-        active INTEGER NOT NULL DEFAULT 1,
-        is_on INTEGER NOT NULL DEFAULT 1,
-                veg INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (category) REFERENCES Category(catid)
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS Orders (
-        billno INTEGER PRIMARY KEY AUTOINCREMENT,
-        kot INTEGER NOT NULL,
-        price NUMERIC NOT NULL,
-        sgst NUMERIC NOT NULL,
-        cgst NUMERIC NOT NULL,
-        tax NUMERIC NOT NULL,
-        cashier INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        is_offline INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (cashier) REFERENCES User(userid)
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS OrderDetails (
-        orderid INTEGER NOT NULL,
-        foodid INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        PRIMARY KEY(orderid, foodid),
-        FOREIGN KEY (orderid) REFERENCES Orders(billno),
-        FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS DiscountedOrders (
-        billno INTEGER PRIMARY KEY,
-        Initial_price NUMERIC NOT NULL,
-        discount_percentage NUMERIC NOT NULL,
-        discount_amount NUMERIC NOT NULL,
-        FOREIGN KEY (billno) REFERENCES Orders(billno) ON DELETE CASCADE
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS HeldOrders (
-        heldid INTEGER PRIMARY KEY AUTOINCREMENT,
-        price NUMERIC NOT NULL,
-        sgst NUMERIC NOT NULL,
-        cgst NUMERIC NOT NULL,
-        tax NUMERIC NOT NULL,
-        cashier INTEGER NOT NULL,
-        date TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY (cashier) REFERENCES User(userid)
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS HeldOrderDetails (
-        heldid INTEGER NOT NULL,
-        foodid INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        PRIMARY KEY(heldid, foodid),
-        FOREIGN KEY (heldid) REFERENCES HeldOrders(heldid),
-        FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
-      )`);
-  
-      db.run(`CREATE TABLE IF NOT EXISTS DeletedOrders (
-        billno INTEGER PRIMARY KEY,
-        kot INTEGER NOT NULL,
-        price NUMERIC NOT NULL,
-        sgst NUMERIC NOT NULL,
-        cgst NUMERIC NOT NULL,
-        tax NUMERIC NOT NULL,
-        cashier INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        table_id INTEGER,
-        table_label TEXT,
-        is_offline INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (cashier) REFERENCES User(userid)
-      )`);
-  
-            db.run(`CREATE TABLE IF NOT EXISTS DeletedOrderDetails (
-        orderid INTEGER NOT NULL,
-        foodid INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        PRIMARY KEY(orderid, foodid),
-        FOREIGN KEY (orderid) REFERENCES DeletedOrders(billno),
-        FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
-      )`);
-  
-            // One-time cleanup of legacy tables from old schema
-            db.run(`DROP TABLE IF EXISTS OnlineOrderItems`);
-            db.run(`DROP TABLE IF EXISTS OnlineOrders`);
-            db.run(`DROP TABLE IF EXISTS Inventory`);
-            db.run(`DROP TABLE IF EXISTS Miscellaneous`);
+        CREATE TABLE IF NOT EXISTS AppSetup (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            is_initialized INTEGER NOT NULL DEFAULT 0,
+            activation_key TEXT,
+            tenant_id TEXT,
+            tenant_name TEXT,
+            tenant_location TEXT,
+            contact_name TEXT,
+            contact_phone TEXT,
+            contact_email TEXT,
+            contact_address TEXT,
+            master_pin_hash TEXT,
+            app_instance_id TEXT,
+            app_version TEXT,
+            platform TEXT,
+            arch TEXT,
+            remote_project_url TEXT,
+            remote_anon_key TEXT,
+            activated_at TEXT,
+            updated_at TEXT
+        );
 
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_orders_date ON Orders(date)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_orders_cashier ON Orders(cashier)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_orders_table_id ON Orders(table_id)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_orderdetails_orderid ON OrderDetails(orderid)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_orderdetails_foodid ON OrderDetails(foodid)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_fooditem_category ON FoodItem(category)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_fooditem_active_is_on ON FoodItem(active, is_on)`);
-                        db.run(`CREATE INDEX IF NOT EXISTS idx_deletedorders_date ON DeletedOrders(date)`);
+        CREATE TABLE IF NOT EXISTS ActivationKey (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_code TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'available',
+            used_by_tenant_id TEXT,
+            used_at TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK (status IN ('available', 'reserved', 'used', 'revoked'))
+        );
 
-                        const schemaChecksPromise = (async () => {
-                            await ensureUserTableSchema();
-                            await ensureAppSetupSchema();
-                            await ensureCategorySchema();
-                            await ensureBillingTableSchema();
-                            await assertTableHasColumns('Category', ['catid', 'catname', 'active']);
-                            await assertTableHasColumns('Orders', ['table_id', 'table_label']);
-                            await assertTableHasColumns('HeldOrders', ['table_id', 'table_label']);
-                            await assertTableHasColumns('DeletedOrders', ['table_id', 'table_label']);
-                            await runDatabaseSanityChecks();
-                        })();
+        INSERT OR IGNORE INTO ActivationKey (key_code, status) VALUES
+            ('LCP7F-3K9QW-2M8DX-5R4TN-00001', 'available'),
+            ('LCP4J-8V2NP-6Q5XT-9H3RA-00002', 'available'),
+            ('LCP9M-1C7LK-4Z8YD-2F6WS-00003', 'available'),
+            ('LCP5X-6R3HJ-9B1QT-7N4PD-00004', 'available'),
+            ('LCP8A-2W5VF-3N9CM-6K7ZX-00005', 'available');
 
-                const foodItemMigrationPromise = new Promise((resolveMigration, rejectMigration) => {
-                    db.all(`PRAGMA table_info(FoodItem)`, [], async (err, columns) => {
-                        if (err) {
-                            rejectMigration(err);
-                            return;
-                        }
+        CREATE TABLE IF NOT EXISTS FoodItem (
+            fid INTEGER PRIMARY KEY AUTOINCREMENT,
+            fname TEXT NOT NULL,
+            category INTEGER NOT NULL,
+            cost NUMERIC NOT NULL,
+            sgst NUMERIC NOT NULL DEFAULT 0,
+            cgst NUMERIC NOT NULL DEFAULT 0,
+            tax NUMERIC NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            is_on INTEGER NOT NULL DEFAULT 1,
+            veg INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (category) REFERENCES Category(catid)
+        );
 
-                        const hasLegacyDependInv = Array.isArray(columns) && columns.some((column) => column.name === 'depend_inv');
-                        if (!hasLegacyDependInv) {
-                            resolveMigration();
-                            return;
-                        }
+        CREATE TABLE IF NOT EXISTS Orders (
+            billno INTEGER PRIMARY KEY AUTOINCREMENT,
+            kot INTEGER NOT NULL,
+            price NUMERIC NOT NULL,
+            sgst NUMERIC NOT NULL,
+            cgst NUMERIC NOT NULL,
+            tax NUMERIC NOT NULL,
+            cashier INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            is_offline INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (cashier) REFERENCES User(userid)
+        );
 
-                        try {
-                            await dbExecAsync(`
-                                PRAGMA foreign_keys = OFF;
+        CREATE TABLE IF NOT EXISTS OrderDetails (
+            orderid INTEGER NOT NULL,
+            foodid INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            PRIMARY KEY(orderid, foodid),
+            FOREIGN KEY (orderid) REFERENCES Orders(billno),
+            FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
+        );
 
-                                CREATE TABLE IF NOT EXISTS FoodItem_new (
-                                    fid INTEGER PRIMARY KEY AUTOINCREMENT,
-                                    fname TEXT NOT NULL,
-                                    category INTEGER NOT NULL,
-                                    cost NUMERIC NOT NULL,
-                                    sgst NUMERIC NOT NULL DEFAULT 0,
-                                    cgst NUMERIC NOT NULL DEFAULT 0,
-                                    tax NUMERIC NOT NULL DEFAULT 0,
-                                    active INTEGER NOT NULL DEFAULT 1,
-                                    is_on INTEGER NOT NULL DEFAULT 1,
-                                    veg INTEGER NOT NULL DEFAULT 0,
-                                    FOREIGN KEY (category) REFERENCES Category(catid)
-                                );
+        CREATE TABLE IF NOT EXISTS DiscountedOrders (
+            billno INTEGER PRIMARY KEY,
+            Initial_price NUMERIC NOT NULL,
+            discount_percentage NUMERIC NOT NULL,
+            discount_amount NUMERIC NOT NULL,
+            FOREIGN KEY (billno) REFERENCES Orders(billno) ON DELETE CASCADE
+        );
 
-                                INSERT INTO FoodItem_new (fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg)
-                                SELECT fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg
-                                FROM FoodItem;
+        CREATE TABLE IF NOT EXISTS HeldOrders (
+            heldid INTEGER PRIMARY KEY AUTOINCREMENT,
+            price NUMERIC NOT NULL,
+            sgst NUMERIC NOT NULL,
+            cgst NUMERIC NOT NULL,
+            tax NUMERIC NOT NULL,
+            cashier INTEGER NOT NULL,
+            date TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (cashier) REFERENCES User(userid)
+        );
 
-                                DROP TABLE FoodItem;
-                                ALTER TABLE FoodItem_new RENAME TO FoodItem;
+        CREATE TABLE IF NOT EXISTS HeldOrderDetails (
+            heldid INTEGER NOT NULL,
+            foodid INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            PRIMARY KEY(heldid, foodid),
+            FOREIGN KEY (heldid) REFERENCES HeldOrders(heldid),
+            FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
+        );
 
-                                PRAGMA foreign_keys = ON;
-                            `);
-                            resolveMigration();
-                        } catch (migrationErr) {
-                            rejectMigration(migrationErr);
-                        }
-                    });
-                });
+        CREATE TABLE IF NOT EXISTS DeletedOrders (
+            billno INTEGER PRIMARY KEY,
+            kot INTEGER NOT NULL,
+            price NUMERIC NOT NULL,
+            sgst NUMERIC NOT NULL,
+            cgst NUMERIC NOT NULL,
+            tax NUMERIC NOT NULL,
+            cashier INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            table_id INTEGER,
+            table_label TEXT,
+            is_offline INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (cashier) REFERENCES User(userid)
+        );
 
-                Promise.all([schemaChecksPromise, foodItemMigrationPromise])
-                    .then(() => {
-                        console.log('✅ Database sanity check passed.');
-                        console.log("📦 Database schema ensured (tables created if missing).");
-                        resolve();
-                    })
-                    .catch((schemaErr) => {
-                        console.error('Error preparing local database schema:', schemaErr);
-                        reject(schemaErr);
-                    });
-            });
-        });
-  }
+        CREATE TABLE IF NOT EXISTS DeletedOrderDetails (
+            orderid INTEGER NOT NULL,
+            foodid INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            PRIMARY KEY(orderid, foodid),
+            FOREIGN KEY (orderid) REFERENCES DeletedOrders(billno),
+            FOREIGN KEY (foodid) REFERENCES FoodItem(fid)
+        );
+
+        DROP TABLE IF EXISTS OnlineOrderItems;
+        DROP TABLE IF EXISTS OnlineOrders;
+        DROP TABLE IF EXISTS Inventory;
+        DROP TABLE IF EXISTS Miscellaneous;
+
+        CREATE INDEX IF NOT EXISTS idx_orders_date ON Orders(date);
+        CREATE INDEX IF NOT EXISTS idx_orders_cashier ON Orders(cashier);
+        CREATE INDEX IF NOT EXISTS idx_orders_table_id ON Orders(table_id);
+        CREATE INDEX IF NOT EXISTS idx_orderdetails_orderid ON OrderDetails(orderid);
+        CREATE INDEX IF NOT EXISTS idx_orderdetails_foodid ON OrderDetails(foodid);
+        CREATE INDEX IF NOT EXISTS idx_fooditem_category ON FoodItem(category);
+        CREATE INDEX IF NOT EXISTS idx_fooditem_active_is_on ON FoodItem(active, is_on);
+        CREATE INDEX IF NOT EXISTS idx_deletedorders_date ON DeletedOrders(date);
+    `);
+
+    // Run async schema migrations
+    return (async () => {
+        await ensureUserTableSchema();
+        await ensureAppSetupSchema();
+        await ensureCategorySchema();
+        await ensureBillingTableSchema();
+        await assertTableHasColumns('Category', ['catid', 'catname', 'active']);
+        await assertTableHasColumns('Orders', ['table_id', 'table_label']);
+        await assertTableHasColumns('HeldOrders', ['table_id', 'table_label']);
+        await assertTableHasColumns('DeletedOrders', ['table_id', 'table_label']);
+        await runDatabaseSanityChecks();
+
+        // FoodItem legacy column migration
+        const columns = db.prepare(`PRAGMA table_info(FoodItem)`).all();
+        const hasLegacyDependInv = Array.isArray(columns) && columns.some((column) => column.name === 'depend_inv');
+        if (hasLegacyDependInv) {
+            db.exec(`
+                PRAGMA foreign_keys = OFF;
+
+                CREATE TABLE IF NOT EXISTS FoodItem_new (
+                    fid INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fname TEXT NOT NULL,
+                    category INTEGER NOT NULL,
+                    cost NUMERIC NOT NULL,
+                    sgst NUMERIC NOT NULL DEFAULT 0,
+                    cgst NUMERIC NOT NULL DEFAULT 0,
+                    tax NUMERIC NOT NULL DEFAULT 0,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    is_on INTEGER NOT NULL DEFAULT 1,
+                    veg INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (category) REFERENCES Category(catid)
+                );
+
+                INSERT INTO FoodItem_new (fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg)
+                SELECT fid, fname, category, cost, sgst, cgst, tax, active, is_on, veg
+                FROM FoodItem;
+
+                DROP TABLE FoodItem;
+                ALTER TABLE FoodItem_new RENAME TO FoodItem;
+
+                PRAGMA foreign_keys = ON;
+            `);
+        }
+
+        console.log('✅ Database sanity check passed.');
+        console.log("📦 Database schema ensured (tables created if missing).");
+    })();
+}
 
 
 
@@ -4084,7 +3505,6 @@ ipcMain.on("search-orders", (event, filters) => {
     const conditions = [];
     const params = [];
 
-    // Bill No range
     if (filters.billNoFrom) {
         conditions.push("o.billno >= ?");
         params.push(parseInt(filters.billNoFrom));
@@ -4093,8 +3513,6 @@ ipcMain.on("search-orders", (event, filters) => {
         conditions.push("o.billno <= ?");
         params.push(parseInt(filters.billNoTo));
     }
-
-    // KOT range
     if (filters.kotFrom) {
         conditions.push("o.kot >= ?");
         params.push(parseInt(filters.kotFrom));
@@ -4103,26 +3521,18 @@ ipcMain.on("search-orders", (event, filters) => {
         conditions.push("o.kot <= ?");
         params.push(parseInt(filters.kotTo));
     }
-
-    // Date range
     if (filters.startDate && filters.endDate) {
         conditions.push("o.date BETWEEN ? AND ?");
         params.push(filters.startDate, filters.endDate);
     }
-
-    // Cashier
     if (filters.cashier) {
         conditions.push("o.cashier = ?");
         params.push(parseInt(filters.cashier));
     }
-
-    // Table
     if (filters.tableId) {
         conditions.push("o.table_id = ?");
         params.push(parseInt(filters.tableId));
     }
-
-    // Price range
     if (filters.minPrice) {
         conditions.push("o.price >= ?");
         params.push(parseFloat(filters.minPrice));
@@ -4138,26 +3548,23 @@ ipcMain.on("search-orders", (event, filters) => {
 
     query += " GROUP BY o.billno ORDER BY o.billno DESC";
 
-    db.all(query, params, (err, rows) => {
-        if (err) {
-            console.error(err);
-            event.sender.send("search-orders-response", { orders: [] });
-        } else {
-            event.sender.send("search-orders-response", { orders: rows });
-        }
-    });
+    try {
+        const rows = dbAllAsync(query, params);
+        event.sender.send("search-orders-response", { orders: rows });
+    } catch (err) {
+        console.error(err);
+        event.sender.send("search-orders-response", { orders: [] });
+    }
 });
 
-// Handle fetching all cashiers
 ipcMain.on("get-all-cashiers", (event) => {
-    db.all("SELECT userid, uname FROM User", [], (err, rows) => {
-        if (err) {
-            console.error(err);
-            event.sender.send("all-cashiers-response", []);
-        } else {
-            event.sender.send("all-cashiers-response", rows);
-        }
-    });
+    try {
+        const rows = dbAllAsync("SELECT userid, uname FROM User");
+        event.sender.send("all-cashiers-response", rows);
+    } catch (err) {
+        console.error(err);
+        event.sender.send("all-cashiers-response", []);
+    }
 });
 
 //-------------------------------- Search Order (in History Section) Ends Here-------------------------------------
