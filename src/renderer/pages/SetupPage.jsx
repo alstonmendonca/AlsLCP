@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
+import OfflineBanner from '@/components/OfflineBanner';
+import useNetworkStatus from '@/hooks/useNetworkStatus';
 
 const initialForm = {
   setupUsername: '',
@@ -56,6 +58,7 @@ const STEPS = [
 ];
 
 export default function SetupPage({ onSetupComplete }) {
+  const { isOnline } = useNetworkStatus();
   const [form, setForm] = useState(initialForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -68,6 +71,12 @@ export default function SetupPage({ onSetupComplete }) {
 
   const submit = async (event) => {
     event.preventDefault();
+
+    if (!isOnline) {
+      setError('No internet connection. Initial setup requires an active WiFi or network connection.');
+      return;
+    }
+
     setSaving(true);
     setError('');
 
@@ -168,6 +177,15 @@ export default function SetupPage({ onSetupComplete }) {
             This runs once on first install. Complete each step in order.
           </p>
         </div>
+
+        {!isOnline ? (
+          <div className="space-y-2">
+            <OfflineBanner />
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Initial setup connects to Supabase to register your tenant and activate your license.
+            </p>
+          </div>
+        ) : null}
 
         <div className="flex items-center gap-2">
           {STEPS.map((step, index) => (
@@ -302,7 +320,7 @@ export default function SetupPage({ onSetupComplete }) {
               {!isLastStep ? (
                 <Button type="button" onClick={goNext} disabled={saving}>Next</Button>
               ) : (
-                <Button type="submit" disabled={saving}>{saving ? 'Setting up...' : 'Complete Setup'}</Button>
+                <Button type="submit" disabled={saving || !isOnline}>{saving ? 'Setting up...' : 'Complete Setup'}</Button>
               )}
             </div>
           </div>

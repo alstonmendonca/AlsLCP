@@ -45,7 +45,7 @@ function asPositiveNumber(value, fallback = 0) {
 class PrintService {
   constructor() {
     this.store = null;
-    this.getFilePath = null;
+    this.fileManager = null;
     this.device = null;
     this.printer = null;
     this.isPrinting = false;
@@ -54,9 +54,9 @@ class PrintService {
     this.lastJobAt = null;
   }
 
-  configure({ store, getFilePath }) {
+  configure({ store, fileManager }) {
     this.store = store;
-    this.getFilePath = getFilePath;
+    this.fileManager = fileManager;
   }
 
   getStoredConfig() {
@@ -125,15 +125,14 @@ class PrintService {
 
   loadTemplate(defaults) {
     try {
-      if (!this.getFilePath) {
+      if (!this.fileManager) {
         return defaults;
       }
-      const templatePath = this.getFilePath('receiptFormat.json');
-      if (!templatePath || !fs.existsSync(templatePath)) {
+      const raw = this.fileManager.readWithSeedFallback('receiptFormat.json');
+      if (!raw) {
         return defaults;
       }
-
-      const parsed = JSON.parse(fs.readFileSync(templatePath, 'utf-8'));
+      const parsed = JSON.parse(raw);
       return { ...defaults, ...parsed };
     } catch (_) {
       return defaults;

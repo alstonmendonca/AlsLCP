@@ -4,7 +4,9 @@ import ipcService from '@/services/ipcService';
 import PrinterConfig from '@/pages/PrinterConfigPage';
 import BusinessInfoPage from '@/pages/BusinessInfoPage';
 import BackupRestorePage from '@/pages/BackupRestorePage';
+import OfflineBanner from '@/components/OfflineBanner';
 import { applyThemePreset, resolveThemePreset } from '@/lib/themePresets';
+import useNetworkStatus from '@/hooks/useNetworkStatus';
 import updateService from '@/services/updateService';
 
 function ThemeTab() {
@@ -249,6 +251,7 @@ function FeatureTogglesTab() {
 }
 
 function EmployeeManagementTab({ user }) {
+  const { isOnline } = useNetworkStatus();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -373,6 +376,11 @@ function EmployeeManagementTab({ user }) {
       <div>
         <h2 className="text-xl font-black text-on-light">Employee Accounts</h2>
         <p className="text-sm text-muted mt-1">Create employee usernames/passwords and assign PINs.</p>
+        {!isOnline ? (
+          <p className="text-xs mt-2" style={{ color: 'var(--status-warning)' }}>
+            You are offline. New employees will be saved locally but won't sync to the server until you reconnect.
+          </p>
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between">
@@ -474,6 +482,7 @@ function AppControlsTab({ onExitApp }) {
 
 function UpdateTab() {
   const CONTACT_MESSAGE = 'Contact Alston Mendonca to subscribe: alstondmendonca@gmail.com';
+  const { isOnline } = useNetworkStatus();
   const [state, setState] = useState({
     status: 'idle',
     updateAvailable: false,
@@ -523,21 +532,25 @@ function UpdateTab() {
     const load = async () => {
       setSubscriptionLoading(true);
       try {
-        const [snapshot, subscriptionSnapshot] = await Promise.all([
-          updateService.getStatus(),
-          updateService.getSubscriptionStatus(),
-        ]);
-
+        const snapshot = await updateService.getStatus();
         if (mounted && snapshot) {
           setState(snapshot);
         }
-        if (mounted) {
-          setSubscription(subscriptionSnapshot || null);
+
+        if (isOnline) {
+          const subscriptionSnapshot = await updateService.getSubscriptionStatus();
+          if (mounted) {
+            setSubscription(subscriptionSnapshot || null);
+          }
+        } else {
+          if (mounted) {
+            setSubscription({ success: false, message: 'Subscription status unavailable offline.' });
+          }
         }
       } catch (error) {
         if (mounted) {
           setState((prev) => ({ ...prev, error: 'Could not load update status.' }));
-          setSubscription({ success: false, message: 'Could not load subscription status.' });
+          setSubscription({ success: false, message: isOnline ? 'Could not load subscription status.' : 'Subscription status unavailable offline.' });
         }
       } finally {
         if (mounted) {
@@ -560,6 +573,10 @@ function UpdateTab() {
   }, []);
 
   const checkForUpdates = async () => {
+    if (!isOnline) {
+      setState((prev) => ({ ...prev, error: 'No internet connection. Please connect to WiFi or network to check for updates.' }));
+      return;
+    }
     setBusy(true);
     try {
       const snapshot = await updateService.checkForUpdates();
@@ -574,6 +591,10 @@ function UpdateTab() {
   };
 
   const downloadUpdate = async () => {
+    if (!isOnline) {
+      setState((prev) => ({ ...prev, error: 'No internet connection. Please connect to WiFi or network to download updates.' }));
+      return;
+    }
     setBusy(true);
     try {
       const snapshot = await updateService.downloadUpdate();
@@ -602,7 +623,9 @@ function UpdateTab() {
   const hasSubscriptionRecord = Boolean(subscription?.subscription);
   const subscriptionStatusText = subscriptionLoading
     ? 'Loading...'
-    : (subscription?.subscription?.status || (subscription?.subscribed ? 'active' : 'not added'));
+    : (!isOnline && !subscription?.subscribed)
+      ? 'Offline'
+      : (subscription?.subscription?.status || (subscription?.subscribed ? 'active' : 'not added'));
 
   return (
     <section className="surface-card rounded-2xl p-5 space-y-4 max-w-2xl">
@@ -610,6 +633,8 @@ function UpdateTab() {
         <h2 className="text-xl font-black text-on-light">Updates</h2>
         <p className="text-sm text-muted mt-1">Check for signed Supabase-hosted releases and install them manually.</p>
       </div>
+
+      {!isOnline ? <OfflineBanner /> : null}
 
       <div className="rounded-xl border border-on-light p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">
@@ -703,10 +728,10 @@ function UpdateTab() {
       {state.error ? <p className="text-sm text-error">{state.error}</p> : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="secondary" onClick={checkForUpdates} disabled={busy || state.checking || state.downloading}>
+        <Button type="button" variant="secondary" onClick={checkForUpdates} disabled={busy || state.checking || state.downloading || !isOnline}>
           {state.checking ? 'Checking...' : 'Check for Updates'}
         </Button>
-        <Button type="button" onClick={downloadUpdate} disabled={busy || !state.updateAvailable || state.downloading}>
+        <Button type="button" onClick={downloadUpdate} disabled={busy || !state.updateAvailable || state.downloading || !isOnline}>
           {state.downloading ? 'Downloading...' : 'Download Update'}
         </Button>
         <Button type="button" variant="secondary" onClick={installUpdate} disabled={busy || !state.canInstall}>

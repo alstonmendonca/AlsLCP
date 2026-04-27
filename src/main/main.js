@@ -2,31 +2,38 @@ const { app, BrowserWindow, Menu, ipcMain, dialog } = require("electron");
 const path = require("path");
 const url = require("url");
 const crypto = require('crypto');
+const dns = require('dns');
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const Store = require('electron-store');
 const printService = require('./services/printService');
 const UpdateService = require('./services/updateService');
+const fileManager = require('./fileManager');
 const {
     compareSecret,
     hashSecret,
     normalizeLoginInput,
 } = require('./auth');
 let mainWindow;
-let store; // Will be initialized after dynamic import
+let store;
+
 function getLocalDateString(date = new Date()) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 }
+
 const projectRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..", "..");
-const basePath = projectRoot;
-const resourcesPath = app.isPackaged
-    ? path.join(process.resourcesPath, "resources")
-    : path.resolve(__dirname, "..", "resources");
-console.log(`Base path: ${basePath}`);
-console.log(`Resources path: ${resourcesPath}`);
+
+function checkNetworkConnectivity(timeoutMs = 3000) {
+    return new Promise((resolve) => {
+        dns.resolve('dns.google', (err) => {
+            resolve(!err);
+        });
+        setTimeout(() => resolve(false), timeoutMs);
+    });
+}
 
 const DEFAULT_SUPABASE_PROJECT_URL = 'https://cjkbjnazwewpnzypgber.supabase.co';
 const VALID_THEME_PRESETS = new Set([
@@ -48,8 +55,8 @@ function getMainWindowUrl() {
     }
 
     const distIndexPath = app.isPackaged
-        ? path.join(process.resourcesPath, 'dist', 'index.html')
-        : path.join(basePath, 'dist', 'index.html');
+        ? path.join(__dirname, '..', '..', 'dist', 'index.html')
+        : path.join(projectRoot, 'dist', 'index.html');
 
     if (fs.existsSync(distIndexPath)) {
         return url.pathToFileURL(distIndexPath).href;
@@ -65,40 +72,8 @@ if (!gotSingleInstanceLock) {
     app.quit();
 }
 
-// Function to get the file path from the single shared resources directory
-function getFilePath(filename) {
-    return path.join(resourcesPath, filename);
-}
-
-function getUserDataFilePath(filename) {
-    return path.join(app.getPath('userData'), filename);
-}
-
 async function ensureDatabaseFileInUserData() {
-    const userDataDbPath = getUserDataFilePath('LC.db');
-
-    if (fs.existsSync(userDataDbPath)) {
-        return userDataDbPath;
-    }
-
-    const userDataDir = path.dirname(userDataDbPath);
-    if (!fs.existsSync(userDataDir)) {
-        await fs.promises.mkdir(userDataDir, { recursive: true });
-    }
-
-    const bundledSeedDbPath = path.join(resourcesPath, 'LC.db');
-    if (fs.existsSync(bundledSeedDbPath)) {
-        await fs.promises.copyFile(bundledSeedDbPath, userDataDbPath);
-        console.log(`📦 Seed database copied to userData: ${userDataDbPath}`);
-        return userDataDbPath;
-    }
-
-    // Final-product path: create a brand-new local database file and let initializeSchema build all tables.
-    const fileHandle = await fs.promises.open(userDataDbPath, 'w');
-    await fileHandle.close();
-    console.log(`🆕 No seed database found. Created empty local database at: ${userDataDbPath}`);
-
-    return userDataDbPath;
+    return fileManager.getDatabasePath();
 }
 
 let db;
@@ -548,6 +523,11 @@ async function callRemoteAuthFunction(remoteConfig, slug, payload) {
         throw new Error('Remote auth configuration is missing.');
     }
 
+    const online = await checkNetworkConnectivity();
+    if (!online) {
+        throw new Error('No internet connection. Please check your WiFi or network and try again.');
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
@@ -800,7 +780,7 @@ async function runStartupTasks() {
 
 // === Setup IPC handlers ===
 function setupIPC() {
-    printService.configure({ store, getFilePath });
+    printService.configure({ store, fileManager });
         const updateService = new UpdateService({
             getSetupRow: getAppSetupRow,
             getRemoteAuthConfig,
@@ -1050,8 +1030,7 @@ function setupIPC() {
                     tagline: '',
                     hours: '',
                 };
-                const businessInfoPath = getFilePath('businessInfo.json');
-                await fs.promises.writeFile(businessInfoPath, JSON.stringify(businessInfo, null, 4), 'utf-8');
+                const businessInfoPath = fileManager.writeToUserData('businessInfo.json', JSON.stringify(businessInfo, null, 4));
             } catch (bizErr) {
                 console.error('Failed to save initial business info:', bizErr);
             }
@@ -1070,6 +1049,10 @@ function setupIPC() {
         }
     });
 
+
+    ipcMain.handle('check-network', async () => {
+        return checkNetworkConnectivity();
+    });
 
     ipcMain.handle('get-update-status', async () => {
         return updateService.getStatus();
@@ -1271,17 +1254,22 @@ function setupIPC() {
                 return { success: false, message: 'Username already exists.' };
             }
 
+            let remoteWarning = '';
             if (remoteConfig) {
-                await callRemoteAuthFunction(remoteConfig, 'admin-add-employee', {
-                    tenantId: setupRow.tenant_id,
-                    adminUsername: sessionUser.username,
-                    adminPassword,
-                    name,
-                    username,
-                    email,
-                    password,
-                    pin,
-                });
+                try {
+                    await callRemoteAuthFunction(remoteConfig, 'admin-add-employee', {
+                        tenantId: setupRow.tenant_id,
+                        adminUsername: sessionUser.username,
+                        adminPassword,
+                        name,
+                        username,
+                        email,
+                        password,
+                        pin,
+                    });
+                } catch (remoteErr) {
+                    remoteWarning = ` Saved locally but server sync failed: ${remoteErr.message}`;
+                }
             }
 
             await insertUserRecord({
@@ -1294,7 +1282,7 @@ function setupIPC() {
                 active: 1,
             });
 
-            return { success: true, message: 'Employee account created.' };
+            return { success: true, message: `Employee account created.${remoteWarning}` };
         } catch (error) {
             console.error('Add employee user error:', error);
             return { success: false, message: error.message || 'Failed to add employee.' };
@@ -1354,13 +1342,18 @@ function setupIPC() {
                     return { success: false, message: 'Admin password is required to sync PIN reset to server.' };
                 }
 
-                await callRemoteAuthFunction(remoteConfig, 'admin-reset-pin', {
-                    tenantId: setupRow.tenant_id,
-                    adminUsername: sessionUser.username,
-                    adminPassword,
-                    targetUsername: targetUser.username,
-                    newPin,
-                });
+                try {
+                    await callRemoteAuthFunction(remoteConfig, 'admin-reset-pin', {
+                        tenantId: setupRow.tenant_id,
+                        adminUsername: sessionUser.username,
+                        adminPassword,
+                        targetUsername: targetUser.username,
+                        newPin,
+                    });
+                } catch (remoteErr) {
+                    await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), userid]);
+                    return { success: true, message: `PIN reset locally but server sync failed: ${remoteErr.message}` };
+                }
             }
 
             await dbRunAsync('UPDATE User SET pin_hash = ? WHERE userid = ?', [hashSecret(newPin), userid]);
@@ -1782,74 +1775,21 @@ ipcMain.on('get-tax-on-items', (event, { startDate, endDate }) => {
 });
 //----------------------------------------------ANALYTICS ENDS HERE--------------------------------------------------------------
 
-ipcMain.on("print-kot-only", (event, { billItems, totalAmount, kot, orderId }) => {
-    printService.safePrint('kot', { billItems, totalAmount, kot, orderId }, 2)
-        .then((result) => {
-            if (result?.success) {
-                event.sender.send('print-kot-success', { kot, orderId });
-            } else {
-                event.sender.send('print-error', result?.error || 'Print failed');
-            }
-        })
-        .catch((error) => {
-            event.sender.send('print-error', `System error: ${error.message}`);
-        });
-});
-
-// Function to generate only KOT (no customer receipt)
-function generateKOTOnly(items, totalAmount, kot, orderId) {
-    const template = loadReceiptTemplate({
-        title: 'ALSPOS',
-        subtitle: 'SJEC, VAMANJOOR',
-        footer: 'Thank you for visiting!',
-        itemHeader: 'ITEM',
-        qtyHeader: 'QTY',
-        priceHeader: 'PRICE',
-        totalText: 'TOTAL: Rs.',
-        kotItemHeader: 'ITEM',
-        kotQtyHeader: 'QTY'
-    });
-
-    const itemWidth = 35;  // More space for food names
-    const kotQtyWidth = 5;
-    
-    const kotItems = items.map(item => 
-        `${item.name.substring(0, itemWidth).padEnd(itemWidth)}` +
-        `${item.quantity.toString().padStart(kotQtyWidth)}`
-    ).join('\n');
-    
-    // KOT receipt only (larger KOT #)
-    const kotReceipt = `\x1B\x61\x01\x1D\x21\x11\x1B\x45\x01\x1B\x2D\x00${kot}
-\x1B\x33\x03
-\x1D\x21\x00\x1B\x45\x00\x1B\x2D\x00
-Time: ${new Date().toLocaleTimeString()}\x1B\x61\x00\x1B\x45\x01\x1B\x2D\x00               Rs ${totalAmount.toFixed(2)}
-------------------------------------------
-ITEM                                   QTY
-------------------------------------------
-\x1B\x45\x00\x1B\x2D\x00
-${kotItems}
-\x1D\x56\x41\x00`;  // Partial cut
-
-    return kotReceipt;
-}
-
 function loadReceiptTemplate(defaults) {
   try {
-    const receiptFormatPath = getFilePath('receiptFormat.json');
-    if (fs.existsSync(receiptFormatPath)) {
-      const raw = fs.readFileSync(receiptFormatPath, 'utf-8');
-      return JSON.parse(raw);
+    const raw = fileManager.readWithSeedFallback('receiptFormat.json');
+    if (raw) {
+      return { ...defaults, ...JSON.parse(raw) };
     }
   } catch (err) {
     console.error("Failed to read receipt format:", err);
   }
-  return defaults; // fall back to defaults
+  return defaults;
 }
 
 function saveReceiptTemplate(template) {
   try {
-    const receiptFormatPath = getFilePath('receiptFormat.json');
-    fs.writeFileSync(receiptFormatPath, JSON.stringify(template, null, 2));
+    fileManager.writeToUserData('receiptFormat.json', JSON.stringify(template, null, 2));
     return true;
   } catch (err) {
     console.error("Failed to save receipt format:", err);
@@ -1857,183 +1797,6 @@ function saveReceiptTemplate(template) {
   }
 }
 
-ipcMain.on("print-bill-only", (event, { billItems, totalAmount, kot, orderId, dateTime }) => {
-    printService.safePrint('bill', { billItems, totalAmount, kot, orderId, dateTime }, 2)
-        .then((result) => {
-            if (result?.success) {
-                event.sender.send('print-success');
-            } else {
-                event.sender.send('print-error', result?.error || 'Print failed');
-            }
-        })
-        .catch((error) => {
-            event.sender.send('print-error', `System error: ${error.message}`);
-        });
-});
-
-// Function to generate only customer receipt (no KOT)
-function generateBillOnly(items, totalAmount, kot, orderId, dateTime) {
-    const template = loadReceiptTemplate({
-        title: 'ALSPOS',
-        subtitle: 'SJEC, VAMANJOOR',
-        footer: 'Thank you for visiting!',
-        itemHeader: 'ITEM',
-        qtyHeader: 'QTY',
-        priceHeader: 'PRICE',
-        totalText: 'TOTAL: Rs.',
-        kotItemHeader: 'ITEM',
-        kotQtyHeader: 'QTY'
-    });
-
-    // Adjusted for 80mm paper (~42-48 chars per line)
-    const customerItemWidth = 27;
-    const itemWidth = 35;  // More space for food names
-    const qtyWidth = 8;    // Right-aligned
-    const priceWidth = 5;  // Right-aligned (for decimals)
-    
-    // Format items with better spacing
-    const formattedItems = items.map(item => 
-        `${item.name.substring(0, itemWidth).padEnd(customerItemWidth)}` +
-        `${item.quantity.toString().padEnd(qtyWidth)}` +
-        `${item.price.toFixed(2).padStart(priceWidth)}`
-    ).join('\n');
-    
-    // Customer receipt only (optimized for 80mm)
-    const customerReceipt = `\x1B\x40\x1B\x61\x01\x1D\x21\x11${template.title}
-\x1D\x21\x00\x1B\x61\x01${template.subtitle}
-\x1B\x61\x01\x1D\x21\x11\x1B\x45\x01
-TOKEN: ${kot}
-\x1D\x21\x00\x1B\x45\x00\x1B\x61\x00
-Date:${dateTime || new Date().toLocaleString()}
-Bill #: ${orderId}
-${'-'.repeat(42)}
-\x1B\x45\x01ITEM                      QTY      PRICE 
-\x1B\x45\x00${formattedItems}
-${'-'.repeat(42)}
-\x1B\x45\x01                        TOTAL: Rs.${totalAmount.toFixed(2).padStart(2)}
-\x1B\x45\x00\x1B\x61\x01${template.footer}
-\x1D\x56\x41\x00`;  // Partial cut
-
-    return customerReceipt;
-}
-
-// Saving the billing template after using edits in receipt editor section
-ipcMain.on('get-receipt-template', (event, defaults) => {
-  const template = loadReceiptTemplate(defaults);
-  event.returnValue = template;
-});
-
-ipcMain.on('update-receipt-template', (event, updates) => {
-  try {
-    const current = loadReceiptTemplate({});
-    const newTemplate = { ...current, ...updates, lastUpdated: new Date().toISOString() };
-    saveReceiptTemplate(newTemplate);
-    event.reply('receipt-template-updated', { success: true });
-  } catch (err) {
-    event.reply('receipt-template-updated', { success: false, error: err.message });
-  }
-});
-
-ipcMain.on('get-order-for-printing', (event, billno) => {
-    try {
-        const order = dbGetAsync(`SELECT * FROM Orders WHERE billno = ?`, [billno]);
-        if (!order) {
-            event.reply('order-for-printing-response', { error: 'Order not found' });
-            return;
-        }
-
-        const items = dbAllAsync(`
-            SELECT f.fname, f.cost as item_price, od.quantity
-            FROM OrderDetails od
-            JOIN FoodItem f ON od.foodid = f.fid
-            WHERE od.orderid = ?
-        `, [billno]);
-
-        const processedItems = items.map(item => ({
-            fname: item.fname,
-            quantity: item.quantity,
-            price: item.item_price
-        }));
-
-        event.reply('order-for-printing-response', { order, items: processedItems });
-    } catch (err) {
-        console.error('Error fetching order for printing:', err);
-        event.reply('order-for-printing-response', { error: err.message });
-    }
-});
-
-ipcMain.handle('test-printer', async (_event, { vendorId, productId } = {}) => {
-    const config = vendorId && productId ? { vendorId, productId } : null;
-    return printService.testPrint(config);
-});
-
-function generateTestReceipt(testData) {
-    const template = store.get('receiptTemplate', {
-        title: 'ALSPOS',
-        subtitle: 'SJEC, VAMANJOOR',
-        footer: 'Thank you for visiting!',
-        kotTitle: 'KITCHEN ORDER',
-        itemHeader: 'ITEM',
-        qtyHeader: 'QTY',
-        priceHeader: 'PRICE',
-        totalText: 'TOTAL: Rs.',
-        kotItemHeader: 'ITEM',
-        kotQtyHeader: 'QTY'
-    });
-
-    // Format test items
-    const formattedItems = testData.items.map(item => 
-        `${item.name.substring(0, 14).padEnd(14)}${item.quantity.toString().padStart(3)}${item.price.toFixed(2).padStart(8)}`
-    ).join('\n');
-    
-    const kotItems = testData.items.map(item => 
-        `${item.name.substring(0, 14).padEnd(14)}${item.quantity.toString().padStart(3)}`
-    ).join('\n');
-    
-    // Test customer receipt
-    const customerReceipt = `
-\x1B\x40\x1B\x61\x01\x1D\x21\x11
-TEST PRINT
-\x1D\x21\x00
-${template.title}
-\x1B\x45\x01
-Token No: ${testData.kot}
-\x1B\x45\x00\x1B\x61\x00
-Date: ${new Date().toLocaleString()}
-BILL NUMBER: ${testData.orderId}
-${'-'.repeat(32)}
-\x1B\x45\x01
-${template.itemHeader.padEnd(14)}${template.qtyHeader.padStart(3)}${template.priceHeader.padStart(8)}
-\x1B\x45\x00
-${formattedItems}
-${'-'.repeat(32)}
-\x1B\x45\x01
-${template.totalText} ${testData.totalAmount.toFixed(2)}
-\x1B\x45\x00\x1B\x61\x01
-This is a test print
-${template.footer}
-\x1D\x56\x41\x10`;
-
-    // Test KOT receipt
-    const kotReceipt = `
-\x1B\x61\x01\x1D\x21\x11
-TEST KOT PRINT
-\x1D\x21\x00
-KOT #: ${testData.kot}
-Time: ${new Date().toLocaleTimeString()}
-${'-'.repeat(32)}
-\x1B\x61\x00\x1B\x45\x01
-${template.kotItemHeader.padEnd(14)}${template.kotQtyHeader.padStart(3)}
-\x1B\x45\x00
-${kotItems}
-${'-'.repeat(32)}
-\x1D\x56\x41\x10`;
-
-    return customerReceipt + kotReceipt;
-}
-
-
-//------------------------------------------------Bill Printing Ends Here--------------------------------------------------
 //-----------------HELD ORDERS-----------------
 //DISPLAY HELD ORDERS
 ipcMain.on('get-held-orders', (event) => {
@@ -2428,61 +2191,6 @@ ipcMain.on("update-order", async (event, { billno, orderItems }) => {
         try { await dbRunAsync('ROLLBACK'); } catch (_) {}
         console.error("Error updating order:", error);
         event.reply("update-order-response", { success: false, message: "Failed to update order." });
-    }
-});
-
-ipcMain.on("confirm-delete-order", async (event, { billNo, reason, source }) => {
-    try {
-        const order = await dbGetAsync("SELECT * FROM Orders WHERE billno = ?", [billNo]);
-        const orderDetails = await dbAllAsync("SELECT * FROM OrderDetails WHERE orderid = ?", [billNo]);
-
-        if (!order) {
-            event.reply("delete-order-response", { success: false, message: "Order not found!" });
-            return;
-        }
-
-        await dbRunAsync('BEGIN TRANSACTION');
-
-        await dbRunAsync(
-            "INSERT INTO DeletedOrders (billno, date, cashier, kot, price, sgst, cgst, tax, reason, table_id, table_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                order.billno,
-                order.date,
-                order.cashier,
-                order.kot,
-                order.price,
-                order.sgst,
-                order.cgst,
-                order.tax,
-                reason,
-                order.table_id ?? null,
-                order.table_label ?? null,
-            ]
-        );
-
-        for (const detail of orderDetails) {
-            await dbRunAsync(
-                "INSERT INTO DeletedOrderDetails (orderid, foodid, quantity) VALUES (?, ?, ?)",
-                [detail.orderid, detail.foodid, detail.quantity]
-            );
-        }
-
-        await dbRunAsync("DELETE FROM Orders WHERE billno = ?", [billNo]);
-        await dbRunAsync("DELETE FROM OrderDetails WHERE orderid = ?", [billNo]);
-
-        await dbRunAsync('COMMIT');
-
-        event.reply("delete-order-response", { success: true, message: "Order deleted successfully!" });
-
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send("order-deleted", { source });
-            mainWindow.webContents.send("refresh-order-history");
-        }
-
-    } catch (error) {
-        try { await dbRunAsync('ROLLBACK'); } catch (_) {}
-        console.error("Error deleting order:", error);
-        event.reply("delete-order-response", { success: false, message: "Failed to delete order." });
     }
 });
 
@@ -2982,15 +2690,7 @@ ipcMain.handle("get-food-items", async (event, categoryName) => {
 //refresh menu
 // In main.js
 
-// Add the listener for 'refresh-menu'
-ipcMain.on('refresh-menu', (event) => {
-    // You can trigger the 'displayMenu' function in the main window
-    // Here you will call a function in your main window or refresh its content.
-    mainWindow.webContents.send('refresh-menu'); // This sends a message to the renderer to trigger menu refresh
-});
 //EXIT THE APP
-// Event listener to handle exit request
-// Event listener to handle exit request
 ipcMain.on("exit-app", (event) => {
       closeDatabase();
       store.delete("sessionUser");
@@ -3000,35 +2700,30 @@ ipcMain.on("exit-app", (event) => {
 // --------------------------------- BUSINESS INFO SECTION -----------------------------
 
 ipcMain.on('save-business-info', (event, businessData) => {
-    const savePath = getFilePath('businessInfo.json');
-    fs.writeFile(savePath, JSON.stringify(businessData, null, 4), 'utf-8', (err) => {
-        if (err) {
-            console.error('Error saving business info:', err);
-            event.reply('save-business-info-response', { success: false, message: err.message });
-        } else {
-            console.log('Business info saved to:', savePath);
-            event.reply('save-business-info-response', { success: true });
-        }
-    });
+    try {
+        fileManager.writeToUserData('businessInfo.json', JSON.stringify(businessData, null, 4));
+        event.reply('save-business-info-response', { success: true });
+    } catch (err) {
+        console.error('Error saving business info:', err);
+        event.reply('save-business-info-response', { success: false, message: err.message });
+    }
 });
 
 ipcMain.handle('load-business-info', async () => {
     try {
-        const dataPath = getFilePath('businessInfo.json');
-        const fileData = await fs.promises.readFile(dataPath, 'utf-8');
-        return JSON.parse(fileData);
+        const raw = fileManager.readWithSeedFallback('businessInfo.json');
+        return raw ? JSON.parse(raw) : null;
     } catch (err) {
         console.error('Failed to load business info:', err);
-        return null; // or return default data if file is missing
+        return null;
     }
 });
 
 // ------------------------------- UI SETTINGS SECTION STARTS HERE ------------------------
 ipcMain.handle('load-ui-settings', async () => {
     try {
-        const dataPath = getFilePath('uiSettings.json');
-        const fileData = await fs.promises.readFile(dataPath, 'utf-8');
-        const parsed = JSON.parse(fileData);
+        const raw = fileManager.readWithSeedFallback('uiSettings.json');
+        const parsed = raw ? JSON.parse(raw) : {};
         const resolvedTheme = normalizeThemePreset(parsed?.themePreset, 'creamCharcoal');
         return {
             showHoldBill: parsed?.showHoldBill !== false,
@@ -3052,12 +2747,10 @@ ipcMain.handle('load-ui-settings', async () => {
 
 ipcMain.handle('save-ui-settings', async (event, settings) => {
     try {
-        const dataPath = getFilePath('uiSettings.json');
         let existingSettings = {};
-
         try {
-            const current = await fs.promises.readFile(dataPath, 'utf-8');
-            existingSettings = JSON.parse(current);
+            const raw = fileManager.readWithSeedFallback('uiSettings.json');
+            if (raw) existingSettings = JSON.parse(raw);
         } catch (_) {
             existingSettings = {};
         }
@@ -3083,7 +2776,7 @@ ipcMain.handle('save-ui-settings', async (event, settings) => {
                 ? settings.enableTableSelection === true
                 : existingSettings?.enableTableSelection === true,
         };
-        await fs.promises.writeFile(dataPath, JSON.stringify(nextSettings, null, 2), 'utf-8');
+        fileManager.writeToUserData('uiSettings.json', JSON.stringify(nextSettings, null, 2));
         return { success: true };
     } catch (err) {
         console.error('Failed to save UI settings:', err);

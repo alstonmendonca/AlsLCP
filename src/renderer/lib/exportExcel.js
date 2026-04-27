@@ -1,5 +1,3 @@
-import ipcService from '@/services/ipcService';
-
 export async function exportToExcel({ filename, columns, rows }) {
   const XLSX = await import('xlsx');
 
@@ -16,16 +14,13 @@ export async function exportToExcel({ filename, columns, rows }) {
   XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
 
   const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-  const defaultPath = `${filename}-${new Date().toISOString().split('T')[0]}.xlsx`;
-
-  const filePath = await ipcService.invoke('show-save-dialog', defaultPath);
-  if (!filePath) return false;
+  const downloadName = `${filename}-${new Date().toISOString().split('T')[0]}.xlsx`;
 
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filePath.split(/[/\\]/).pop() || defaultPath;
+  a.download = downloadName;
   a.click();
   URL.revokeObjectURL(url);
   return true;

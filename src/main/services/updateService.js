@@ -1,9 +1,19 @@
 const { app } = require('electron');
 const { EventEmitter } = require('events');
 const { spawn } = require('child_process');
+const dns = require('dns');
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
+
+function checkNetworkConnectivity(timeoutMs = 3000) {
+    return new Promise((resolve) => {
+        dns.resolve('dns.google', (err) => {
+            resolve(!err);
+        });
+        setTimeout(() => resolve(false), timeoutMs);
+    });
+}
 
 function normalizeBaseUrl(projectUrl) {
   return String(projectUrl || '').trim().replace(/\/+$/, '');
@@ -59,6 +69,11 @@ class UpdateService extends EventEmitter {
   }
 
   async fetchUpdateInfo() {
+    const online = await checkNetworkConnectivity();
+    if (!online) {
+      throw new Error('No internet connection. Please check your WiFi or network and try again.');
+    }
+
     const setupRow = await this.getSetupRow?.();
     const remoteConfig = this.getRemoteAuthConfig?.(setupRow);
     const appIdentity = this.getAppIdentity?.();
@@ -178,6 +193,11 @@ class UpdateService extends EventEmitter {
   }
 
   async downloadLatestUpdate() {
+    const online = await checkNetworkConnectivity();
+    if (!online) {
+      throw new Error('No internet connection. Please check your WiFi or network and try again.');
+    }
+
     const updateInfo = this.state.updateInfo;
 
     if (!updateInfo?.downloadUrl) {

@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Package Electron app
+        run: npm run make
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Compute SHA256
+        id: hash
+        shell: bash
+        run: |
+          SHA256=$(sha256sum "dist/alspos Setup.exe" | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Upload to Supabase Storage
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          FILE_PATH="dist/alspos Setup.exe"
+          STORAGE_PATH="releases/v${VERSION}/alspos-setup-${VERSION}.exe"
+          
+          curl -s -f -X POST \
+            "${{ secrets.SUPABASE_URL }}/storage/v1/object/app-releases/${STORAGE_PATH}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@${FILE_PATH}"
+          
+          echo "STORAGE_PATH=${STORAGE_PATH}" >> $GITHUB_ENV
+
+      - name: Register release
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          
+          curl -s -f -X POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/register-release" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "version": "'"${VERSION}"'",
+              "platform": "win32",
+              "arch": "x64",
+              "channel": "stable",
+              "storagePath": "'"${STORAGE_PATH}"'",
+              "fileName": "alspos-setup-'"${VERSION}"'.exe",
+              "sha256": "'"${{ steps.hash.outputs.SHA256 }}"'",
+              "releaseNotes": "'"${{ github.event.head_commit.message }}"'",
+              "mandatory": false,
+              "rolloutPercent": 100
+            }'
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "## Release v${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **File:** alspos-setup-${{ steps.version.outputs.VERSION }}.exe" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA256:** \`${{ steps.hash.outputs.SHA256 }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bucket:** app-releases" >> $GITHUB_STEP_SUMMARY
+          echo "- **Path:** ${STORAGE_PATH}" >> $GITHUB_STEP_SUMMARY

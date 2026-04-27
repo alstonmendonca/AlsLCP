@@ -31,13 +31,10 @@
       "restore.js",
       "src/preload.js",
       "dist/**/*",
-      "src/main/**/*"
+      "src/main/**/*",
+      "src/resources/**/*"
     ],
     "extraResources": [
-      {
-        "from": "src/resources",
-        "to": "resources"
-      },
       {
         "from": "assets",
         "to": "assets"
