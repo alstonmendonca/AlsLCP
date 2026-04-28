@@ -45,20 +45,20 @@ jobs:
           SHA256=$(sha256sum "dist/alspos Setup.exe" | awk '{print $1}')
           echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
 
-      - name: Upload to Supabase Storage
+      - name: Install TUS client
+        run: npm install --no-save tus-js-client
+
+      - name: Upload to Supabase Storage (TUS resumable)
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          FILE_PATH="dist/alspos Setup.exe"
-          STORAGE_PATH="releases/v${VERSION}/alspos-setup-${VERSION}.exe"
-          
-          curl -s -f -X POST \
-            "${{ secrets.SUPABASE_URL }}/storage/v1/object/app-releases/${STORAGE_PATH}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary "@${FILE_PATH}"
-          
+          export STORAGE_PATH="releases/v${VERSION}/alspos-setup-${VERSION}.exe"
           echo "STORAGE_PATH=${STORAGE_PATH}" >> $GITHUB_ENV
+          node scripts/tus-upload.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FILE_PATH: dist/alspos Setup.exe
 
       - name: Register release
         shell: bash
