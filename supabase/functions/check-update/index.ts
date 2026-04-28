@@ -133,10 +133,29 @@ Deno.serve(async (req) => {
       .update({ last_seen_at: nowIso, app_version: String(body.appVersion || currentVersion).trim() || currentVersion })
       .eq("id", device.id);
 
+    const isSubscribed = subscription.status === "active" || subscription.status === "trial";
+    let effectiveChannel = "stable";
+
+    if (isSubscribed) {
+      const { data: premiumRelease } = await supabase
+        .from("app_releases")
+        .select("id")
+        .eq("channel", "premium")
+        .eq("platform", platform)
+        .eq("arch", arch)
+        .eq("active", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (premiumRelease) {
+        effectiveChannel = "premium";
+      }
+    }
+
     const { data: release, error: releaseErr } = await supabase
       .from("app_releases")
       .select("id, channel, platform, arch, version, storage_bucket, storage_path, file_name, sha256, release_notes, min_supported_version, mandatory, rollout_percent, active, published_at, chunk_count, file_size")
-      .eq("channel", channel)
+      .eq("channel", effectiveChannel)
       .eq("platform", platform)
       .eq("arch", arch)
       .eq("active", true)
@@ -150,7 +169,7 @@ Deno.serve(async (req) => {
         app_instance_id: appInstanceId,
         current_version: currentVersion,
         latest_version: null,
-        channel,
+        channel: effectiveChannel,
         platform,
         arch,
         result: "no_update",
@@ -180,7 +199,7 @@ Deno.serve(async (req) => {
         app_instance_id: appInstanceId,
         current_version: currentVersion,
         latest_version: release.version,
-        channel,
+        channel: effectiveChannel,
         platform,
         arch,
         result: "denied",
@@ -205,7 +224,7 @@ Deno.serve(async (req) => {
         app_instance_id: appInstanceId,
         current_version: currentVersion,
         latest_version: release.version,
-        channel,
+        channel: effectiveChannel,
         platform,
         arch,
         result: "no_update",
@@ -243,7 +262,7 @@ Deno.serve(async (req) => {
             app_instance_id: appInstanceId,
             current_version: currentVersion,
             latest_version: release.version,
-            channel,
+            channel: effectiveChannel,
             platform,
             arch,
             result: "error",
@@ -268,7 +287,7 @@ Deno.serve(async (req) => {
           app_instance_id: appInstanceId,
           current_version: currentVersion,
           latest_version: release.version,
-          channel,
+          channel: effectiveChannel,
           platform,
           arch,
           result: "error",
@@ -288,7 +307,7 @@ Deno.serve(async (req) => {
       app_instance_id: appInstanceId,
       current_version: currentVersion,
       latest_version: release.version,
-      channel,
+      channel: effectiveChannel,
       platform,
       arch,
       result: "allowed",
