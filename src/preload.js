@@ -95,6 +95,7 @@ const allowedSendChannels = new Set([
   'get-held-order-details',
   'delete-held-order',
   'update-order',
+  'delete-order',
 ]);
 
 const allowedReceiveChannels = new Set([
@@ -136,6 +137,7 @@ const allowedReceiveChannels = new Set([
   'held-order-details-data',
   'held-order-deleted',
   'update-order-response',
+  'delete-order-response',
 ]);
 
 function isAllowedChannel(channel, allowedSet, mode) {

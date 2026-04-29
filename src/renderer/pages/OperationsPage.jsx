@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ui/dialogs';
+import { ConfirmDialog, PromptDialog } from '@/components/ui/dialogs';
 import ipcService from '@/services/ipcService';
 
 function localDateString(date = new Date()) {
@@ -120,6 +120,7 @@ export default function OperationsPage({ initialTab }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [editBillno, setEditBillno] = useState(null);
+  const [deleteBillno, setDeleteBillno] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({ open: false, kind: '' });
 
   const fetchTodayOrders = async () => {
@@ -245,6 +246,31 @@ export default function OperationsPage({ initialTab }) {
     }
   };
 
+  const deleteOrder = async (reason) => {
+    if (!deleteBillno) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.requestReply('delete-order', 'delete-order-response', {
+        billno: deleteBillno,
+        reason: reason || 'No reason provided',
+      });
+      if (!result?.success) {
+        setError(result?.message || 'Failed to delete order.');
+        return;
+      }
+      setMessage(`Order #${deleteBillno} deleted successfully.`);
+      setDeleteBillno(null);
+      fetchTodayOrders();
+    } catch (err) {
+      console.error('Failed to delete order:', err);
+      setError('Failed to delete order.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   useEffect(() => {
     setActiveTab(initialTab || 'todaysOrders');
   }, [initialTab]);
@@ -322,7 +348,10 @@ export default function OperationsPage({ initialTab }) {
                     <td className="px-3 py-2 text-sm text-on-light">{formatCurrency(order.price)}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{order.food_items || '-'}</td>
                     <td className="px-3 py-2">
-                      <Button size="sm" variant="secondary" onClick={() => setEditBillno(order.billno)} disabled={busy}>Edit</Button>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => setEditBillno(order.billno)} disabled={busy}>Edit</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setDeleteBillno(order.billno)} disabled={busy}>Delete</Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -421,6 +450,17 @@ export default function OperationsPage({ initialTab }) {
         confirmText="Clear"
         onConfirm={runClearAction}
         onCancel={() => setConfirmDialog({ open: false, kind: '' })}
+        busy={busy}
+      />
+
+      <PromptDialog
+        open={deleteBillno !== null}
+        title={`Delete Order #${deleteBillno}`}
+        message="This will move the order to deleted orders. This action cannot be undone."
+        label="Reason for deletion"
+        confirmText="Delete Order"
+        onConfirm={deleteOrder}
+        onCancel={() => setDeleteBillno(null)}
         busy={busy}
       />
     </div>

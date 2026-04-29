@@ -30,7 +30,7 @@ function formatDate(value) {
   return `${day}-${month}-${year}`;
 }
 
-export function HistoryTable({ orders, exportFilename }) {
+export function HistoryTable({ orders, exportFilename, onDelete }) {
   const { sorted, sortConfig, requestSort } = useSortableData(orders);
   const [exporting, setExporting] = useState(false);
 
@@ -70,7 +70,7 @@ export function HistoryTable({ orders, exportFilename }) {
           {exporting ? 'Exporting...' : 'Export Excel'}
         </Button>
       </div>
-      <table className="w-full min-w-[980px]">
+      <table className={onDelete ? "w-full min-w-[1050px]" : "w-full min-w-[980px]"}>
         <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
           <tr>
             <SortHeader label="Bill No" sortKey="billno" sortConfig={sortConfig} onSort={requestSort} />
@@ -82,6 +82,7 @@ export function HistoryTable({ orders, exportFilename }) {
             <SortHeader label="CGST" sortKey="cgst" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="Tax" sortKey="tax" sortConfig={sortConfig} onSort={requestSort} />
             <SortHeader label="Items" sortKey="food_items" sortConfig={sortConfig} onSort={requestSort} />
+            {onDelete && <th className="px-3 py-2 text-left text-xs uppercase text-muted">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -96,6 +97,11 @@ export function HistoryTable({ orders, exportFilename }) {
               <td className="px-3 py-2 text-sm text-on-light">{Number(order.cgst || 0).toFixed(2)}</td>
               <td className="px-3 py-2 text-sm text-on-light">{Number(order.tax || 0).toFixed(2)}</td>
               <td className="px-3 py-2 text-sm text-on-light max-w-[420px] whitespace-normal">{order.food_items || '-'}</td>
+              {onDelete && (
+                <td className="px-3 py-2">
+                  <Button size="sm" variant="ghost" onClick={() => onDelete(order.billno)}>Delete</Button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

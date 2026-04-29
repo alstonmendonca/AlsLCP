@@ -2239,6 +2239,46 @@ ipcMain.on("clear-deleted-orders", (event) => {
     }
 });
 
+ipcMain.on("delete-order", async (event, { billno, reason }) => {
+    try {
+        const order = db.prepare(`SELECT * FROM Orders WHERE billno = ?`).get(billno);
+        if (!order) {
+            event.reply("delete-order-response", { success: false, message: "Order not found." });
+            return;
+        }
+
+        const orderDetails = db.prepare(`SELECT * FROM OrderDetails WHERE orderid = ?`).all(billno);
+
+        const deleteTx = db.transaction(() => {
+            db.prepare(`
+                INSERT INTO DeletedOrders (billno, kot, price, sgst, cgst, tax, cashier, date, reason, table_id, table_label, is_offline)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                order.billno, order.kot, order.price, order.sgst, order.cgst, order.tax,
+                order.cashier, order.date, reason || 'No reason provided',
+                order.table_id, order.table_label, order.is_offline
+            );
+
+            for (const detail of orderDetails) {
+                db.prepare(`
+                    INSERT OR IGNORE INTO DeletedOrderDetails (orderid, foodid, quantity)
+                    VALUES (?, ?, ?)
+                `).run(detail.orderid, detail.foodid, detail.quantity);
+            }
+
+            db.prepare(`DELETE FROM DiscountedOrders WHERE billno = ?`).run(billno);
+            db.prepare(`DELETE FROM OrderDetails WHERE orderid = ?`).run(billno);
+            db.prepare(`DELETE FROM Orders WHERE billno = ?`).run(billno);
+        });
+
+        deleteTx();
+        event.reply("delete-order-response", { success: true });
+    } catch (err) {
+        console.error("Error deleting order:", err);
+        event.reply("delete-order-response", { success: false, message: err.message });
+    }
+});
+
 ipcMain.on("get-discounted-orders", (event, { startDate, endDate }) => {
     try {
         const rows = dbAllAsync(`

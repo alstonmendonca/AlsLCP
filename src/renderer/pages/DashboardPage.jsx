@@ -39,7 +39,6 @@ const navSections = [
     { key: 'profile',       label: 'Profile & Password' },
     { key: 'featureToggles', label: 'Feature Toggles' },
     { key: 'updates',       label: 'Updates' },
-    { key: 'categoryManagement', label: 'Category Management' },
     { key: 'theme',         label: 'Theme' },
     { key: 'printerConfig', label: 'Printer Config' },
     { key: 'businessInfo',  label: 'Business Info' },

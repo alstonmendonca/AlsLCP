@@ -1,6 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import ipcService from '@/services/ipcService';
+import { useSortableData } from '@/hooks/useSortableData';
+
+function SortHeader({ label, sortKey, sortConfig, onSort }) {
+  const active = sortConfig.key === sortKey;
+  const arrow = active ? (sortConfig.direction === 'asc' ? ' [A]' : ' [D]') : '';
+  return (
+    <th
+      className="px-3 py-2 text-left text-xs uppercase text-muted cursor-pointer select-none hover:opacity-80"
+      onClick={() => onSort(sortKey)}
+    >
+      {label}{arrow}
+    </th>
+  );
+}
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(Number(value || 0));
@@ -26,6 +40,7 @@ export default function SearchOrderPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const mountedRef = useRef(true);
+  const { sorted, sortConfig, requestSort } = useSortableData(orders);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -143,21 +158,21 @@ export default function SearchOrderPage() {
           <table className="w-full min-w-[980px]">
             <thead className="sticky top-0 z-10 bg-input border-b border-on-light">
               <tr>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Bill</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">KOT</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Date</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Cashier</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Price</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">SGST</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">CGST</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Tax</th>
-                <th className="px-3 py-2 text-left text-xs uppercase text-muted">Items</th>
+                <SortHeader label="Bill" sortKey="billno" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="KOT" sortKey="kot" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Date" sortKey="date" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Cashier" sortKey="cashier_name" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Price" sortKey="price" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="SGST" sortKey="sgst" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="CGST" sortKey="cgst" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Tax" sortKey="tax" sortConfig={sortConfig} onSort={requestSort} />
+                <SortHeader label="Items" sortKey="food_items" sortConfig={sortConfig} onSort={requestSort} />
               </tr>
             </thead>
             <tbody>
-              {orders.length === 0 ? (
+              {sorted.length === 0 ? (
                 <tr><td colSpan={9} className="px-3 py-6 text-sm text-muted">No orders found. Use the filters above to search.</td></tr>
-              ) : orders.map((order, i) => (
+              ) : sorted.map((order, i) => (
                 <tr key={order.billno ?? `so-${i}`} className="border-b border-subtle">
                   <td className="px-3 py-2 text-sm font-medium text-on-light">{order.billno ?? '-'}</td>
                   <td className="px-3 py-2 text-sm text-on-light">{order.kot ?? '-'}</td>

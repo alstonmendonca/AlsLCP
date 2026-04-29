@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { PromptDialog } from '@/components/ui/dialogs';
 import ipcService from '@/services/ipcService';
 import { HistoryTable } from '@/components/DataTable';
 
@@ -16,7 +17,10 @@ export default function HistoryPage() {
   const [endDate, setEndDate] = useState(today);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [orders, setOrders] = useState([]);
+  const [deleteBillno, setDeleteBillno] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   const fetchHistory = async () => {
     if (!startDate || !endDate) {
@@ -42,6 +46,31 @@ export default function HistoryPage() {
       setOrders([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deleteOrder = async (reason) => {
+    if (!deleteBillno) return;
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await ipcService.requestReply('delete-order', 'delete-order-response', {
+        billno: deleteBillno,
+        reason: reason || 'No reason provided',
+      });
+      if (!result?.success) {
+        setError(result?.message || 'Failed to delete order.');
+        return;
+      }
+      setMessage(`Order #${deleteBillno} deleted successfully.`);
+      setDeleteBillno(null);
+      fetchHistory();
+    } catch (err) {
+      console.error('Failed to delete order:', err);
+      setError('Failed to delete order.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -101,14 +130,26 @@ export default function HistoryPage() {
       </section>
 
       {error ? <p className="text-sm text-error">{error}</p> : null}
+      {message ? <p className="text-sm text-success">{message}</p> : null}
 
       <section className="surface-card rounded-2xl overflow-hidden">
         {loading ? (
           <p className="text-sm text-muted text-center py-8">Loading order history...</p>
         ) : (
-          <HistoryTable orders={orders} exportFilename="order-history" />
+          <HistoryTable orders={orders} exportFilename="order-history" onDelete={setDeleteBillno} />
         )}
       </section>
+
+      <PromptDialog
+        open={deleteBillno !== null}
+        title={`Delete Order #${deleteBillno}`}
+        message="This will move the order to deleted orders. This action cannot be undone."
+        label="Reason for deletion"
+        confirmText="Delete Order"
+        onConfirm={deleteOrder}
+        onCancel={() => setDeleteBillno(null)}
+        busy={busy}
+      />
     </div>
   );
 }
