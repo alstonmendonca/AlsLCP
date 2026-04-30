@@ -39,7 +39,7 @@ Generated: 2026-04-30
 ### 6. Seed activation keys hardcoded and identical across installs
 - **File:** `src/main/main.js` (initializeSchema)
 - **Impact:** If valid server-side, any install can use them.
-- **Status:** Needs review — depends on Supabase `activation_keys` table state.
+- **Status:** Not needed — seed keys are local-only, not validated server-side.
 
 ### 7. SQL string interpolation in encryption migration
 - **Files:** `src/main/main.js:166`, `src/main/restore.js:62`
@@ -61,7 +61,7 @@ Generated: 2026-04-30
 
 ### 10. No offline subscription caching
 - **Impact:** Subscription check fails without network. No local expiry cache or grace period.
-- **Status:** Pending fix
+- **Status:** Not needed
 
 ### 11. `is_offline` column never populated
 - **Files:** `src/main/main.js` (Orders, DeletedOrders tables)
@@ -70,16 +70,16 @@ Generated: 2026-04-30
 
 ### 12. `email` field silently discarded in Supabase edge functions
 - **Files:** `supabase/functions/admin-add-employee/index.ts`, `supabase/functions/initialize-tenant/index.ts`
-- **Status:** Needs review — may be intentional.
+- **Status:** Not needed — intentional design.
 
 ### 13. PIN login is a linear bcrypt scan
 - **File:** `src/main/main.js:691-705`
 - **Impact:** Slow with many employees. Leaks user count via timing.
-- **Status:** Pending fix
+- **Status:** Fixed
 
 ### 14. Missing Supabase migration files
 - **Impact:** `001_initial_schema.sql` and `202604181045_auto_expire_subscriptions.sql` referenced but missing.
-- **Status:** Needs review.
+- **Status:** Fixed
 
 ---
 

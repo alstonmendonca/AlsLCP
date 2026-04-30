@@ -697,19 +697,31 @@ async function authenticateByPassword(username, password) {
 }
 
 async function authenticateByPin(pin) {
-    const users = await dbAllAsync(
-        `SELECT userid, uname, username, email, is_admin, active, pin_hash
+    const rows = await dbAllAsync(
+        `SELECT userid, pin_hash
          FROM User
          WHERE active = 1 AND pin_hash IS NOT NULL`
     );
 
-    for (const candidate of users) {
-        if (compareSecret(pin, candidate.pin_hash)) {
-            return toSessionUser(candidate);
+    let matchedUserId = null;
+    for (const row of rows) {
+        if (compareSecret(pin, row.pin_hash)) {
+            matchedUserId = row.userid;
         }
     }
 
-    return null;
+    if (matchedUserId === null) {
+        return null;
+    }
+
+    const candidate = await dbGetAsync(
+        `SELECT userid, uname, username, email, is_admin, active
+         FROM User
+         WHERE userid = ? AND active = 1`,
+        [matchedUserId]
+    );
+
+    return candidate ? toSessionUser(candidate) : null;
 }
 
 async function authenticateLoginPayload(payload) {

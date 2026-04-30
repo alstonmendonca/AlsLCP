@@ -721,6 +721,9 @@ cron.lock
 *.dmp
 *.backup
 
+# Supabase schema and migrations (not database dumps)
+!supabase/**/*.sql
+
 # Configuration files
 *.config
 *.cfg
