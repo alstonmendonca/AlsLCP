@@ -87,25 +87,32 @@ Generated: 2026-04-30
 
 ### 15. No `workflow_dispatch` trigger on release workflow
 - **File:** `.github/workflows/release.yml`
+- **Status:** Fixed
 
 ### 16. No electron-builder binary caching in CI
 - **File:** `.github/workflows/release.yml`
+- **Status:** Fixed
 
 ### 17. `head_commit.message` may be empty for tag pushes
 - **File:** `.github/workflows/release.yml:105`
+- **Status:** Fixed
 
 ### 18. `split`/`stat` commands fragile on Windows Git Bash
 - **File:** `.github/workflows/release.yml:54-63`
+- **Status:** Acceptable — `shell: bash` with `stat`/`wc` fallback handles portability.
 
 ### 19. No code signing configured
 - **Impact:** Windows SmartScreen warnings for users.
+- **Status:** Deferred — requires certificate purchase.
 
 ### 20. `electron-rebuild` devDependency redundant
 - **File:** `package.json:66`
+- **Status:** Fixed
 
 ### 21. OfflineBanner hardcoded Tailwind classes
 - **File:** `src/renderer/components/OfflineBanner.jsx`
 - **Impact:** Breaks theme consistency.
+- **Status:** Fixed
 
 ### 22. No PR checks, lint workflow, dependabot, or test suite
 - **File:** `.github/workflows/` — only release workflow exists.
