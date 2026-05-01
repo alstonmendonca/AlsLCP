@@ -4,6 +4,7 @@ import ipcService from '@/services/ipcService';
 import PrinterConfig from '@/pages/PrinterConfigPage';
 import BusinessInfoPage from '@/pages/BusinessInfoPage';
 import BackupRestorePage from '@/pages/BackupRestorePage';
+import ReceiptEditorPage from '@/pages/ReceiptEditorPage';
 import OfflineBanner from '@/components/OfflineBanner';
 import { applyThemePreset, resolveThemePreset } from '@/lib/themePresets';
 import useNetworkStatus from '@/hooks/useNetworkStatus';
@@ -264,7 +265,6 @@ function EmployeeManagementTab({ user }) {
   const [form, setForm] = useState({
     name: '',
     username: '',
-    email: '',
     password: '',
     pin: '',
   });
@@ -272,7 +272,6 @@ function EmployeeManagementTab({ user }) {
     userid: null,
     name: '',
     username: '',
-    email: '',
     isAdmin: false,
   });
   const [pinReset, setPinReset] = useState({ userid: null, pin: '' });
@@ -318,7 +317,6 @@ function EmployeeManagementTab({ user }) {
     return (
       entry.name.toLowerCase().includes(query) ||
       entry.username.toLowerCase().includes(query) ||
-      entry.email.toLowerCase().includes(query) ||
       (entry.isAdmin ? 'admin' : 'employee').includes(query)
     );
   });
@@ -331,7 +329,6 @@ function EmployeeManagementTab({ user }) {
       const result = await ipcService.invoke('add-new-user', {
         name: form.name.trim(),
         username: form.username.trim(),
-        email: form.email.trim(),
         password: form.password,
         pin: form.pin.trim(),
       });
@@ -342,7 +339,7 @@ function EmployeeManagementTab({ user }) {
       }
 
       setMessage(result?.message || 'Employee account created.');
-      setForm({ name: '', username: '', email: '', password: '', pin: '' });
+      setForm({ name: '', username: '', password: '', pin: '' });
       setShowAddEmployeeModal(false);
       await loadUsers();
     } catch (err) {
@@ -358,7 +355,6 @@ function EmployeeManagementTab({ user }) {
       userid: entry.userid,
       name: entry.name,
       username: entry.username,
-      email: entry.email || '',
       isAdmin: entry.isAdmin,
     });
     setShowEditEmployeeModal(true);
@@ -375,7 +371,6 @@ function EmployeeManagementTab({ user }) {
         userid: editForm.userid,
         name: editForm.name.trim(),
         username: editForm.username.trim(),
-        email: editForm.email.trim(),
         isAdmin: editForm.isAdmin,
       });
 
@@ -485,7 +480,6 @@ function EmployeeManagementTab({ user }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input ref={addEmployeeNameInputRef} value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Employee Name" />
                 <input value={form.username} onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Username" />
-                <input type="email" value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Email (optional)" />
                 <input type="password" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} className="surface-input h-10 rounded-lg px-3" placeholder="Password (min 6)" />
                 <input value={form.pin} onChange={(e) => setForm((prev) => ({ ...prev, pin: e.target.value.replace(/\D+/g, '').slice(0, 8) }))} className="surface-input h-10 rounded-lg px-3" placeholder="PIN (4-8 digits)" />
               </div>
@@ -530,16 +524,6 @@ function EmployeeManagementTab({ user }) {
                     className="surface-input h-10 w-full rounded-lg px-3"
                     placeholder="Username"
                     required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs uppercase text-muted mb-1">Email</label>
-                  <input
-                    type="email"
-                    value={editForm.email}
-                    onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))}
-                    className="surface-input h-10 w-full rounded-lg px-3"
-                    placeholder="Email (optional)"
                   />
                 </div>
                 <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
@@ -603,7 +587,6 @@ function EmployeeManagementTab({ user }) {
               <tr>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Name</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Username</th>
-                <th className="text-left px-3 py-2 text-xs uppercase text-muted">Email</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Role</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Reset PIN</th>
                 <th className="text-left px-3 py-2 text-xs uppercase text-muted">Actions</th>
@@ -612,7 +595,7 @@ function EmployeeManagementTab({ user }) {
             <tbody>
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-4 text-sm text-muted text-center">
+                  <td colSpan={5} className="px-3 py-4 text-sm text-muted text-center">
                     {searchQuery ? 'No employees match your search.' : 'No employees found.'}
                   </td>
                 </tr>
@@ -621,7 +604,6 @@ function EmployeeManagementTab({ user }) {
                   <tr key={entry.userid} className="border-b border-subtle">
                     <td className="px-3 py-2 text-sm text-on-light">{entry.name}</td>
                     <td className="px-3 py-2 text-sm text-on-light">{entry.username}</td>
-                    <td className="px-3 py-2 text-sm text-on-light">{entry.email || '-'}</td>
                     <td className="px-3 py-2 text-sm text-on-light">
                       <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${entry.isAdmin ? 'bg-primary/15 text-primary' : 'bg-black/10 text-on-light'}`}>
                         {entry.isAdmin ? 'Admin' : 'Employee'}
@@ -1047,7 +1029,6 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
   const activeTab = initialTab || 'profile';
   const [name, setName] = useState(user?.name || '');
   const [username, setUsername] = useState(user?.username || '');
-  const [email, setEmail] = useState(user?.email || '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [currentPin, setCurrentPin] = useState('');
@@ -1076,7 +1057,6 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
         userid: user.userid,
         name: name.trim(),
         username: username.trim(),
-        email: email.trim(),
       });
 
       if (!result?.success) {
@@ -1181,10 +1161,6 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
                 <label className="block text-xs uppercase text-muted mb-1">Username</label>
                 <input value={username} onChange={(e) => setUsername(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
               </div>
-              <div>
-                <label className="block text-xs uppercase text-muted mb-1">Email</label>
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="surface-input h-10 w-full rounded-lg px-3" />
-              </div>
             </div>
 
             <Button onClick={updateProfile} disabled={savingProfile}>{savingProfile ? 'Saving...' : 'Save Profile'}</Button>
@@ -1244,6 +1220,10 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
 
       {activeTab === 'businessInfo' && (
         <BusinessInfoPage />
+      )}
+
+      {activeTab === 'receiptEditor' && (
+        <ReceiptEditorPage />
       )}
 
       {activeTab === 'backup' && (

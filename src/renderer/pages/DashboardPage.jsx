@@ -42,6 +42,7 @@ const navSections = [
     { key: 'theme',         label: 'Theme' },
     { key: 'printerConfig', label: 'Printer Config' },
     { key: 'businessInfo',  label: 'Business Info' },
+    { key: 'receiptEditor', label: 'Receipt Editor' },
     { key: 'backup',        label: 'Backup Database' },
     { key: 'restore',       label: 'Restore Database' },
     { key: 'exitApp',       label: 'Exit App' },

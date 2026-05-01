@@ -66,6 +66,8 @@ const allowedInvokeChannels = new Set([
   'edit-employee',
   'delete-employee',
   'change-user-pin',
+  'load-receipt-template',
+  'save-receipt-template',
 ]);
 
 const allowedSendChannels = new Set([

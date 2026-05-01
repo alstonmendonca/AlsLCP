@@ -70,7 +70,7 @@ Generated: 2026-04-30
 
 ### 12. `email` field silently discarded in Supabase edge functions
 - **Files:** `supabase/functions/admin-add-employee/index.ts`, `supabase/functions/initialize-tenant/index.ts`
-- **Status:** Not needed — intentional design.
+- **Status:** Fixed — removed email collection from employee forms and handlers
 
 ### 13. PIN login is a linear bcrypt scan
 - **File:** `src/main/main.js:691-705`

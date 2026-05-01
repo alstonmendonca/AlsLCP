@@ -84,7 +84,12 @@ if (!gotSingleInstanceLock) {
 }
 
 async function ensureDatabaseFileInUserData() {
-    return fileManager.getDatabasePath();
+    const dbPath = fileManager.getUserDataPath('LC.db');
+    const dir = require('path').dirname(dbPath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    return dbPath;
 }
 
 let db;
@@ -97,11 +102,22 @@ async function initializeDatabaseConnection() {
 
     console.log(`📊 Using database at: ${dbPath}`);
 
-    // Check if the existing DB is already encrypted
-    const needsMigration = !isDatabaseEncrypted(dbPath, encKey);
-    if (needsMigration) {
-        console.log('🔐 Migrating unencrypted database to encrypted...');
-        migrateToEncrypted(dbPath, encKey);
+    // Only attempt migration if the file already exists
+    if (fs.existsSync(dbPath)) {
+        const isEncrypted = isDatabaseEncrypted(dbPath, encKey);
+        if (!isEncrypted) {
+            console.log('🔐 Migrating unencrypted database to encrypted...');
+            try {
+                migrateToEncrypted(dbPath, encKey);
+            } catch (err) {
+                console.warn('⚠️ Migration failed, creating fresh encrypted database:', err.message);
+                try { fs.unlinkSync(dbPath); } catch (_) {}
+                createEncryptedDatabase(dbPath, encKey);
+            }
+        }
+    } else {
+        console.log('🆕 No database found, creating fresh encrypted database.');
+        createEncryptedDatabase(dbPath, encKey);
     }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -190,6 +206,15 @@ function migrateToEncrypted(dbPath, encKey) {
     }
 }
 
+function createEncryptedDatabase(dbPath, encKey) {
+    assertHexKey(encKey);
+    const freshDb = new Database(dbPath);
+    freshDb.pragma(`key = '${encKey}'`);
+    freshDb.pragma('journal_mode = WAL');
+    freshDb.close();
+    console.log('🆕 Fresh encrypted database created.');
+}
+
 
 async function initStore() {
     try {
@@ -243,7 +268,6 @@ async function ensureUserTableSchema() {
 
     const hasIsAdmin = cols.some((col) => col.name === 'isadmin');
     const hasUsername = cols.some((col) => col.name === 'username');
-    const hasEmail = cols.some((col) => col.name === 'email');
     const hasPasswordHash = cols.some((col) => col.name === 'password_hash');
     const hasPinHash = cols.some((col) => col.name === 'pin_hash');
     const hasAdminFlag = cols.some((col) => col.name === 'is_admin');
@@ -252,10 +276,6 @@ async function ensureUserTableSchema() {
     // Add missing columns first so we can safely normalize data before canonical rebuild.
     if (!hasUsername) {
         await dbRunAsync('ALTER TABLE User ADD COLUMN username TEXT');
-    }
-
-    if (!hasEmail) {
-        await dbRunAsync('ALTER TABLE User ADD COLUMN email TEXT');
     }
 
     if (!hasPasswordHash) {
@@ -279,12 +299,6 @@ async function ensureUserTableSchema() {
             NULLIF(TRIM(username), ''),
             COALESCE(NULLIF(TRIM(uname), ''), 'cashier')
         ))`);
-
-    await dbRunAsync(`UPDATE User
-        SET email = COALESCE(
-            NULLIF(TRIM(email), ''),
-            LOWER(REPLACE(COALESCE(NULLIF(TRIM(username), ''), 'cashier'), ' ', '')) || '@local.user'
-        )`);
 
     if (hasIsAdmin) {
         await dbRunAsync(`UPDATE User
@@ -326,19 +340,17 @@ async function ensureUserTableSchema() {
             userid INTEGER PRIMARY KEY AUTOINCREMENT,
             uname TEXT NOT NULL,
             username TEXT NOT NULL,
-            email TEXT NOT NULL,
             password_hash TEXT,
             pin_hash TEXT,
             is_admin INTEGER NOT NULL DEFAULT 0,
             active INTEGER NOT NULL DEFAULT 1
         )`);
 
-        await dbRunAsync(`INSERT INTO User_canonical (userid, uname, username, email, password_hash, pin_hash, is_admin, active)
+        await dbRunAsync(`INSERT INTO User_canonical (userid, uname, username, password_hash, pin_hash, is_admin, active)
             SELECT
                 userid,
                 COALESCE(NULLIF(TRIM(uname), ''), 'cashier'),
                 LOWER(COALESCE(NULLIF(TRIM(username), ''), COALESCE(NULLIF(TRIM(uname), ''), 'cashier'))),
-                COALESCE(NULLIF(TRIM(email), ''), LOWER(REPLACE(COALESCE(NULLIF(TRIM(username), ''), COALESCE(NULLIF(TRIM(uname), ''), 'cashier')), ' ', '')) || '@local.user'),
                 password_hash,
                 pin_hash,
                 COALESCE(is_admin, 0),
@@ -490,19 +502,17 @@ async function assertTableHasColumns(tableName, requiredColumns) {
 async function insertUserRecord({
     name,
     username,
-    email,
     passwordHash = null,
     pinHash = null,
     isAdmin = 0,
     active = 1,
 }) {
     await dbRunAsync(
-        `INSERT INTO User (uname, username, email, password_hash, pin_hash, is_admin, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO User (uname, username, password_hash, pin_hash, is_admin, active)
+         VALUES (?, ?, ?, ?, ?, ?)`,
         [
             name,
             String(username || '').trim().toLowerCase(),
-            email,
             passwordHash,
             pinHash,
             isAdmin ? 1 : 0,
@@ -522,33 +532,30 @@ process.on('uncaughtException', (err) => {
 async function getOrCreateCashierUser(preferredUsername) {
     const normalizedUsername = String(preferredUsername || 'cashier').trim().toLowerCase() || 'cashier';
     const safeName = normalizedUsername;
-    const safeEmail = `${normalizedUsername.replace(/\s+/g, '')}@local.user`;
 
     let user = await dbGetAsync(
-        "SELECT userid, uname, username, email FROM User WHERE username = ?",
+        "SELECT userid, uname, username FROM User WHERE username = ?",
         [normalizedUsername]
     );
 
     if (!user) {
-        user = await dbGetAsync("SELECT userid, uname, username, email FROM User ORDER BY userid ASC LIMIT 1");
+        user = await dbGetAsync("SELECT userid, uname, username FROM User ORDER BY userid ASC LIMIT 1");
     }
 
     if (!user) {
         await insertUserRecord({
             name: safeName,
             username: normalizedUsername,
-            email: safeEmail,
             isAdmin: 0,
             active: 1,
         });
-        user = await dbGetAsync("SELECT userid, uname, username, email FROM User ORDER BY userid DESC LIMIT 1");
+        user = await dbGetAsync("SELECT userid, uname, username FROM User ORDER BY userid DESC LIMIT 1");
     }
 
     return {
         name: user.uname,
         username: user.username,
         userid: user.userid,
-        email: user.email
     };
 }
 
@@ -565,7 +572,6 @@ function toSessionUser(row) {
         userid: row.userid,
         name: row.uname,
         username: row.username,
-        email: row.email,
         isAdmin: Number(row.is_admin || 0) === 1,
     };
 }
@@ -650,7 +656,7 @@ async function ensureLocalUserFromRemote(remoteUser) {
     }
 
     let localUser = await dbGetAsync(
-        `SELECT userid, uname, username, email, is_admin
+        `SELECT userid, uname, username, is_admin
          FROM User
          WHERE LOWER(username) = LOWER(?)
          LIMIT 1`,
@@ -661,13 +667,12 @@ async function ensureLocalUserFromRemote(remoteUser) {
         await insertUserRecord({
             name: String(remoteUser?.name || username),
             username,
-            email: `${username}@local.user`,
             isAdmin: remoteUser?.isAdmin ? 1 : 0,
             active: 1,
         });
 
         localUser = await dbGetAsync(
-            `SELECT userid, uname, username, email, is_admin
+            `SELECT userid, uname, username, is_admin
              FROM User
              WHERE LOWER(username) = LOWER(?)
              ORDER BY userid DESC
@@ -682,7 +687,7 @@ async function ensureLocalUserFromRemote(remoteUser) {
 async function authenticateByPassword(username, password) {
     const normalized = String(username || '').trim().toLowerCase();
     const candidate = await dbGetAsync(
-        `SELECT userid, uname, username, email, is_admin, active, password_hash
+        `SELECT userid, uname, username, is_admin, active, password_hash
          FROM User
          WHERE LOWER(username) = LOWER(?) AND active = 1
          LIMIT 1`,
@@ -715,7 +720,7 @@ async function authenticateByPin(pin) {
     }
 
     const candidate = await dbGetAsync(
-        `SELECT userid, uname, username, email, is_admin, active
+        `SELECT userid, uname, username, is_admin, active
          FROM User
          WHERE userid = ? AND active = 1`,
         [matchedUserId]
@@ -1080,7 +1085,6 @@ function setupIPC() {
             await insertUserRecord({
                 name: adminName,
                 username: adminUsername,
-                email: contactEmail || `${adminUsername}@local.user`,
                 passwordHash: hashSecret(adminPassword),
                 pinHash: hashSecret(masterPin),
                 isAdmin: 1,
@@ -1088,7 +1092,7 @@ function setupIPC() {
             });
 
             const createdUser = await dbGetAsync(
-                `SELECT userid, uname, username, email, is_admin
+                `SELECT userid, uname, username, is_admin
                  FROM User
                  WHERE LOWER(username) = LOWER(?)
                  ORDER BY userid DESC
@@ -1247,7 +1251,6 @@ function setupIPC() {
             const userid = Number(payload?.userid);
             const name = String(payload?.name || '').trim();
             const username = String(payload?.username || '').trim().toLowerCase();
-            const email = String(payload?.email || '').trim();
 
             if (!userid || !name || !username) {
                 return { success: false, message: 'Name and username are required.' };
@@ -1266,12 +1269,12 @@ function setupIPC() {
             }
 
             await dbRunAsync(
-                'UPDATE User SET uname = ?, username = ?, email = ? WHERE userid = ?',
-                [name, username, email || `${username}@local.user`, userid]
+                'UPDATE User SET uname = ?, username = ? WHERE userid = ?',
+                [name, username, userid]
             );
 
             if (Number(sessionUser.userid) === userid) {
-                const updated = { ...sessionUser, name, username, email: email || `${username}@local.user` };
+                const updated = { ...sessionUser, name, username };
                 store.set('sessionUser', updated);
             }
 
@@ -1355,7 +1358,6 @@ function setupIPC() {
 
             const name = String(payload?.name || '').trim();
             const username = String(payload?.username || '').trim().toLowerCase();
-            const email = String(payload?.email || '').trim();
             const password = String(payload?.password || '');
             const pin = String(payload?.pin || '').trim();
 
@@ -1371,7 +1373,6 @@ function setupIPC() {
             await insertUserRecord({
                 name,
                 username,
-                email: email || `${username}@local.user`,
                 passwordHash: hashSecret(password),
                 pinHash: hashSecret(pin),
                 isAdmin: 0,
@@ -1389,7 +1390,7 @@ function setupIPC() {
         try {
             await ensureAdminSession();
             const rows = await dbAllAsync(
-                `SELECT userid, uname, username, email, is_admin, active
+                `SELECT userid, uname, username, is_admin, active
                  FROM User
                  ORDER BY is_admin DESC, uname ASC`
             );
@@ -1400,7 +1401,6 @@ function setupIPC() {
                     userid: row.userid,
                     name: row.uname,
                     username: row.username,
-                    email: row.email,
                     isAdmin: Number(row.is_admin || 0) === 1,
                     active: Number(row.active || 0) === 1,
                 })),
@@ -1445,7 +1445,6 @@ function setupIPC() {
             const userid = Number(payload?.userid);
             const name = String(payload?.name || '').trim();
             const username = String(payload?.username || '').trim().toLowerCase();
-            const email = String(payload?.email || '').trim();
             const isAdmin = payload?.isAdmin ? 1 : 0;
 
             if (!userid || !name || !username) {
@@ -1473,8 +1472,8 @@ function setupIPC() {
             }
 
             await dbRunAsync(
-                'UPDATE User SET uname = ?, username = ?, email = ?, is_admin = ? WHERE userid = ?',
-                [name, username, email || `${username}@local.user`, isAdmin, userid]
+                'UPDATE User SET uname = ?, username = ?, is_admin = ? WHERE userid = ?',
+                [name, username, isAdmin, userid]
             );
 
             return { success: true, message: 'Employee updated successfully.' };
@@ -1935,7 +1934,7 @@ ipcMain.on('get-tax-on-items', (event, { startDate, endDate }) => {
 
 function loadReceiptTemplate(defaults) {
   try {
-    const raw = fileManager.readWithSeedFallback('receiptFormat.json');
+    const raw = fileManager.readFromUserData('receiptFormat.json');
     if (raw) {
       return { ...defaults, ...JSON.parse(raw) };
     }
@@ -1954,6 +1953,40 @@ function saveReceiptTemplate(template) {
     return false;
   }
 }
+
+ipcMain.handle('load-receipt-template', async () => {
+    try {
+        const defaults = {
+            title: 'ALSPOS',
+            subtitle: 'SJEC, VAMANJOOR',
+            footer: 'Thank you for visiting!',
+            itemHeader: 'ITEM',
+            qtyHeader: 'QTY',
+            priceHeader: 'PRICE',
+            totalText: 'TOTAL: Rs.',
+            kotItemHeader: 'ITEM',
+            kotQtyHeader: 'QTY',
+        };
+        const raw = fileManager.readFromUserData('receiptFormat.json');
+        if (raw) {
+            return { ...defaults, ...JSON.parse(raw) };
+        }
+        return defaults;
+    } catch (err) {
+        console.error('Failed to load receipt template:', err);
+        return { success: false, message: err.message };
+    }
+});
+
+ipcMain.handle('save-receipt-template', async (event, template) => {
+    try {
+        fileManager.writeToUserData('receiptFormat.json', JSON.stringify(template, null, 2));
+        return { success: true };
+    } catch (err) {
+        console.error('Failed to save receipt template:', err);
+        return { success: false, message: err.message };
+    }
+});
 
 //-----------------HELD ORDERS-----------------
 //DISPLAY HELD ORDERS
@@ -2909,7 +2942,7 @@ ipcMain.on('save-business-info', (event, businessData) => {
 
 ipcMain.handle('load-business-info', async () => {
     try {
-        const raw = fileManager.readWithSeedFallback('businessInfo.json');
+        const raw = fileManager.readFromUserData('businessInfo.json');
         return raw ? JSON.parse(raw) : null;
     } catch (err) {
         console.error('Failed to load business info:', err);
@@ -2920,7 +2953,7 @@ ipcMain.handle('load-business-info', async () => {
 // ------------------------------- UI SETTINGS SECTION STARTS HERE ------------------------
 ipcMain.handle('load-ui-settings', async () => {
     try {
-        const raw = fileManager.readWithSeedFallback('uiSettings.json');
+            const raw = fileManager.readFromUserData('uiSettings.json');
         const parsed = raw ? JSON.parse(raw) : {};
         const resolvedTheme = normalizeThemePreset(parsed?.themePreset, 'creamCharcoal');
         return {
@@ -2947,7 +2980,7 @@ ipcMain.handle('save-ui-settings', async (event, settings) => {
     try {
         let existingSettings = {};
         try {
-            const raw = fileManager.readWithSeedFallback('uiSettings.json');
+        const raw = fileManager.readFromUserData('uiSettings.json');
             if (raw) existingSettings = JSON.parse(raw);
         } catch (_) {
             existingSettings = {};
@@ -3191,7 +3224,6 @@ function initializeSchema() {
             userid INTEGER PRIMARY KEY AUTOINCREMENT,
             uname TEXT NOT NULL,
             username TEXT NOT NULL,
-            email TEXT NOT NULL,
             password_hash TEXT,
             pin_hash TEXT,
             is_admin INTEGER NOT NULL DEFAULT 0,
@@ -3260,6 +3292,8 @@ function initializeSchema() {
             tax NUMERIC NOT NULL,
             cashier INTEGER NOT NULL,
             date TEXT NOT NULL,
+            table_id INTEGER,
+            table_label TEXT,
             FOREIGN KEY (cashier) REFERENCES User(userid)
         );
 
@@ -3288,6 +3322,8 @@ function initializeSchema() {
             tax NUMERIC NOT NULL,
             cashier INTEGER NOT NULL,
             date TEXT NOT NULL DEFAULT (datetime('now')),
+            table_id INTEGER,
+            table_label TEXT,
             FOREIGN KEY (cashier) REFERENCES User(userid)
         );
 

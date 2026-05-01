@@ -128,7 +128,7 @@ class PrintService {
       if (!this.fileManager) {
         return defaults;
       }
-      const raw = this.fileManager.readWithSeedFallback('receiptFormat.json');
+      const raw = this.fileManager.readFromUserData('receiptFormat.json');
       if (!raw) {
         return defaults;
       }

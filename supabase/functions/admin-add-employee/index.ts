@@ -23,7 +23,6 @@ Deno.serve(async (req) => {
 
     const fullName = String(body.name || "").trim();
     const username = String(body.username || "").trim().toLowerCase();
-    const email = String(body.email || "").trim();
     const password = String(body.password || "");
     const pin = String(body.pin || "").trim();
 
