@@ -46,6 +46,7 @@ class PrintService {
   constructor() {
     this.store = null;
     this.fileManager = null;
+    this.getAppSetupRow = null;
     this.device = null;
     this.printer = null;
     this.isPrinting = false;
@@ -54,9 +55,10 @@ class PrintService {
     this.lastJobAt = null;
   }
 
-  configure({ store, fileManager }) {
+  configure({ store, fileManager, getAppSetupRow }) {
     this.store = store;
     this.fileManager = fileManager;
+    this.getAppSetupRow = getAppSetupRow;
   }
 
   getStoredConfig() {
@@ -123,17 +125,35 @@ class PrintService {
     }
   }
 
-  loadTemplate(defaults) {
+  async loadTemplate(defaults) {
     try {
       if (!this.fileManager) {
         return defaults;
       }
+
+      // Fetch tenant info for defaults if available
+      let tenantName = 'ALSPOS';
+      let tenantLocation = '';
+      if (this.getAppSetupRow) {
+        try {
+          const setupRow = await this.getAppSetupRow();
+          if (setupRow?.tenant_name) tenantName = setupRow.tenant_name;
+          if (setupRow?.tenant_location) tenantLocation = setupRow.tenant_location;
+        } catch (_) {}
+      }
+
+      const dynamicDefaults = {
+        ...defaults,
+        title: defaults.title || tenantName,
+        subtitle: defaults.subtitle || tenantLocation,
+      };
+
       const raw = this.fileManager.readFromUserData('receiptFormat.json');
       if (!raw) {
-        return defaults;
+        return dynamicDefaults;
       }
       const parsed = JSON.parse(raw);
-      return { ...defaults, ...parsed };
+      return { ...dynamicDefaults, ...parsed };
     } catch (_) {
       return defaults;
     }
@@ -155,8 +175,8 @@ class PrintService {
     const totalFromItems = items.reduce((sum, item) => sum + (item.qty * item.price), 0);
 
     return {
-      shopName: clampText(order.shopName || 'ALSPOS', 30),
-      subtitle: clampText(order.subtitle || 'SJEC, VAMANJOOR', 30),
+      shopName: clampText(order.shopName || '', 30),
+      subtitle: clampText(order.subtitle || '', 30),
       footer: clampText(order.footer || 'Thank you for visiting!', 36),
       token: clampText(order.kot || order.token || '-', 12),
       billNo: clampText(order.orderId || order.billNo || '-', 20),
@@ -238,9 +258,9 @@ class PrintService {
       return ready;
     }
 
-    const template = this.loadTemplate({
-      title: 'ALSPOS',
-      subtitle: 'SJEC, VAMANJOOR',
+    const template = await this.loadTemplate({
+      title: '',
+      subtitle: '',
       footer: 'Thank you for visiting!',
       itemHeader: 'ITEM',
       qtyHeader: 'QTY',
@@ -293,7 +313,7 @@ class PrintService {
       return ready;
     }
 
-    const template = this.loadTemplate({
+    const template = await this.loadTemplate({
       kotItemHeader: 'ITEM',
       kotQtyHeader: 'QTY',
     });

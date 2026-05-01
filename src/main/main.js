@@ -873,7 +873,7 @@ async function runStartupTasks() {
 
 // === Setup IPC handlers ===
 function setupIPC() {
-    printService.configure({ store, fileManager });
+    printService.configure({ store, fileManager, getAppSetupRow });
         const updateService = new UpdateService({
             getSetupRow: getAppSetupRow,
             getRemoteAuthConfig,
@@ -1956,9 +1956,13 @@ function saveReceiptTemplate(template) {
 
 ipcMain.handle('load-receipt-template', async () => {
     try {
+        const setupRow = await getAppSetupRow();
+        const tenantName = setupRow?.tenant_name || 'ALSPOS';
+        const tenantLocation = setupRow?.tenant_location || '';
+
         const defaults = {
-            title: 'ALSPOS',
-            subtitle: 'SJEC, VAMANJOOR',
+            title: tenantName,
+            subtitle: tenantLocation,
             footer: 'Thank you for visiting!',
             itemHeader: 'ITEM',
             qtyHeader: 'QTY',

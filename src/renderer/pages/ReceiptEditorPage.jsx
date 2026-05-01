@@ -119,8 +119,8 @@ export default function ReceiptEditorPage() {
       <div className="border-t border-on-light pt-4">
         <h3 className="text-sm font-semibold text-on-light uppercase mb-3">Preview</h3>
         <div className="bg-white text-black p-4 rounded-lg font-mono text-xs leading-relaxed max-w-sm">
-          <div className="text-center font-bold text-base">{template.title || 'ALSPOS'}</div>
-          <div className="text-center">{template.subtitle || 'SJEC, VAMANJOOR'}</div>
+          <div className="text-center font-bold text-base">{template.title || 'Restaurant Name'}</div>
+          <div className="text-center">{template.subtitle || 'Location'}</div>
           <div className="text-center">TOKEN: 1</div>
           <div>Date: {new Date().toLocaleString('en-IN')}</div>
           <div>Bill #: 1001</div>
