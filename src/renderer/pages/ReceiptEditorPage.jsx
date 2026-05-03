@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import ipcService from '@/services/ipcService';
 
 const DEFAULT_TEMPLATE = {
@@ -363,7 +364,7 @@ function Toggle({ value, onChange, label }) {
   return (
     <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light px-3 py-2">
       <span className="text-sm text-on-light">{label}</span>
-      <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4" />
+      <Checkbox checked={value === true} onChange={(e) => onChange(e.target.checked)} />
     </label>
   );
 }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useToast } from '@/components/ToastProvider';
 import ipcService from '@/services/ipcService';
 import PrinterConfig from '@/pages/PrinterConfigPage';
 import BusinessInfoPage from '@/pages/BusinessInfoPage';
@@ -11,6 +13,7 @@ import useNetworkStatus from '@/hooks/useNetworkStatus';
 import updateService from '@/services/updateService';
 
 function ThemeTab() {
+  const toast = useToast();
   const [selectedPreset, setSelectedPreset] = useState('creamCharcoal');
   const [savingPreset, setSavingPreset] = useState(false);
   const [message, setMessage] = useState('');
@@ -73,19 +76,17 @@ function ThemeTab() {
     const resolved = resolveThemePreset(presetKey);
     setSelectedPreset(resolved);
     setSavingPreset(true);
-    setMessage('');
-    setError('');
     applyThemePreset(resolved);
 
     try {
       const result = await ipcService.invoke('save-ui-settings', { themePreset: resolved });
       if (!result?.success) {
-        setError(result?.message || 'Failed to save theme preset.');
+        toast.error(result?.message || 'Failed to save theme preset.');
         return;
       }
-      setMessage('Theme preset updated.');
+      toast.success('Theme preset updated.');
     } catch (saveError) {
-      setError('Failed to save theme preset.');
+      toast.error('Failed to save theme preset.');
     } finally {
       setSavingPreset(false);
     }
@@ -134,6 +135,7 @@ function ThemeTab() {
 }
 
 function FeatureTogglesTab() {
+  const toast = useToast();
   const [showHoldBill, setShowHoldBill] = useState(true);
   const [usePrinter, setUsePrinter] = useState(true);
   const [autoPrintBillOnSave, setAutoPrintBillOnSave] = useState(false);
@@ -172,8 +174,6 @@ function FeatureTogglesTab() {
 
   const save = async () => {
     setSaving(true);
-    setError('');
-    setMessage('');
     try {
       const result = await ipcService.invoke('save-ui-settings', {
         showHoldBill,
@@ -184,12 +184,12 @@ function FeatureTogglesTab() {
       });
       if (!mountedRef.current) return;
       if (!result?.success) {
-        setError(result?.message || 'Failed to save feature toggles.');
+        toast.error(result?.message || 'Failed to save feature toggles.');
         return;
       }
-      setMessage('Feature toggles saved successfully.');
+      toast.success('Feature toggles saved successfully.');
     } catch (saveError) {
-      if (mountedRef.current) setError('Could not save feature toggles.');
+      if (mountedRef.current) toast.error('Could not save feature toggles.');
     } finally {
       if (mountedRef.current) setSaving(false);
     }
@@ -208,7 +208,7 @@ function FeatureTogglesTab() {
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
         <span className="text-sm text-on-light">Show Hold Bill In Billing</span>
-        <input type="checkbox" checked={showHoldBill} onChange={(e) => setShowHoldBill(e.target.checked)} className="h-4 w-4" />
+        <Checkbox checked={showHoldBill} onChange={(e) => setShowHoldBill(e.target.checked)} />
       </label>
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
@@ -216,7 +216,7 @@ function FeatureTogglesTab() {
           <p className="text-sm text-on-light">Use Printer</p>
           <p className="text-xs text-muted mt-1">Master switch for all print actions and printer health checks in Billing.</p>
         </div>
-        <input type="checkbox" checked={usePrinter} onChange={(e) => setUsePrinter(e.target.checked)} className="h-4 w-4" />
+        <Checkbox checked={usePrinter} onChange={(e) => setUsePrinter(e.target.checked)} />
       </label>
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
@@ -224,7 +224,7 @@ function FeatureTogglesTab() {
           <p className="text-sm text-on-light">Auto Print Customer Bill After Save</p>
           <p className="text-xs text-muted mt-1">Automatically prints the final bill as soon as a bill is saved.</p>
         </div>
-        <input type="checkbox" checked={autoPrintBillOnSave} onChange={(e) => setAutoPrintBillOnSave(e.target.checked)} className="h-4 w-4" disabled={!usePrinter} />
+        <Checkbox checked={autoPrintBillOnSave} onChange={(e) => setAutoPrintBillOnSave(e.target.checked)} disabled={!usePrinter} />
       </label>
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
@@ -232,7 +232,7 @@ function FeatureTogglesTab() {
           <p className="text-sm text-on-light">Auto Print KOT After Save</p>
           <p className="text-xs text-muted mt-1">Automatically prints the kitchen order ticket as soon as a bill is saved.</p>
         </div>
-        <input type="checkbox" checked={autoPrintKotOnSave} onChange={(e) => setAutoPrintKotOnSave(e.target.checked)} className="h-4 w-4" disabled={!usePrinter} />
+        <Checkbox checked={autoPrintKotOnSave} onChange={(e) => setAutoPrintKotOnSave(e.target.checked)} disabled={!usePrinter} />
       </label>
 
       <label className="flex items-center justify-between gap-3 rounded-lg border border-on-light p-3">
@@ -240,7 +240,7 @@ function FeatureTogglesTab() {
           <p className="text-sm text-on-light">Enable Table Selection In Billing</p>
           <p className="text-xs text-muted mt-1">Shows a Select Table button in Billing and enables table assignment + table management modal.</p>
         </div>
-        <input type="checkbox" checked={enableTableSelection} onChange={(e) => setEnableTableSelection(e.target.checked)} className="h-4 w-4" />
+        <Checkbox checked={enableTableSelection} onChange={(e) => setEnableTableSelection(e.target.checked)} />
       </label>
 
       {error ? <p className="text-sm text-error">{error}</p> : null}
@@ -1075,9 +1075,10 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
   };
 
   const changePassword = async () => {
+    const toast = useToast();
     clearAlerts();
     if (!user?.userid) {
-      setError('No active session found.');
+      toast.error('No active session found.');
       return;
     }
 
@@ -1090,26 +1091,27 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
       });
 
       if (!result?.success) {
-        setError(result?.message || 'Failed to change password.');
+        toast.error(result?.message || 'Failed to change password.');
         return;
       }
 
-      setMessage(result.message || 'Password changed successfully.');
+      toast.success(result.message || 'Password changed successfully.');
       setCurrentPassword('');
       setNewPassword('');
       await onLogout();
     } catch (passwordError) {
       console.error('Password update failed:', passwordError);
-      setError('Failed to change password.');
+      toast.error('Failed to change password.');
     } finally {
       setSavingPassword(false);
     }
   };
 
   const changePin = async () => {
+    const toast = useToast();
     clearAlerts();
     if (!user?.userid) {
-      setError('No active session found.');
+      toast.error('No active session found.');
       return;
     }
 
@@ -1122,16 +1124,16 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
       });
 
       if (!result?.success) {
-        setError(result?.message || 'Failed to change PIN.');
+        toast.error(result?.message || 'Failed to change PIN.');
         return;
       }
 
-      setMessage(result.message || 'PIN changed successfully.');
+      toast.success(result.message || 'PIN changed successfully.');
       setCurrentPin('');
       setNewPin('');
     } catch (pinError) {
       console.error('PIN update failed:', pinError);
-      setError('Failed to change PIN.');
+      toast.error('Failed to change PIN.');
     } finally {
       setSavingPin(false);
     }
@@ -1199,8 +1201,7 @@ export default function SettingsPage({ user, onLogout, initialTab }) {
             <Button onClick={changePin} disabled={savingPin}>{savingPin ? 'Updating...' : 'Change PIN'}</Button>
           </section>
 
-          {error ? <p className="text-sm text-error xl:col-span-2">{error}</p> : null}
-          {message ? <p className="text-sm text-success xl:col-span-2">{message}</p> : null}
+          {/* Error/message display removed - now using toast notifications */}
 
           <div className="xl:col-span-2">
             <EmployeeManagementTab user={user} />

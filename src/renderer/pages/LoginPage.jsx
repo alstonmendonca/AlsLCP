@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ToastProvider';
 import ipcService from '@/services/ipcService';
 
-export default function LoginPage({ onLogin, loading, error }) {
+export default function LoginPage({ onLogin, loading }) {
   const [method, setMethod] = useState('password');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -163,9 +164,7 @@ export default function LoginPage({ onLogin, loading, error }) {
             </div>
           )}
 
-          {error && (
-            <p className="text-sm" style={{ color: loginErrorColor, opacity: 0.9 }}>{error}</p>
-          )}
+          {/* Error display removed - now using toast notifications */}
 
           <Button type="submit" size="lg" className="w-full hover:opacity-90" style={submitButtonStyle} disabled={loading}>
             {loading ? 'Signing in...' : 'Sign in'}

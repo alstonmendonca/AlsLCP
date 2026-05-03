@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import ipcService from '@/services/ipcService';
 import OfflineBanner from '@/components/OfflineBanner';
 import useNetworkStatus from '@/hooks/useNetworkStatus';
@@ -229,17 +230,12 @@ export default function SetupPage({ onSetupComplete }) {
                   <label className="block text-xs uppercase text-muted mb-1">Master PIN</label>
                   <input type="password" value={form.masterPin} onChange={(e) => setField('masterPin', e.target.value.replace(/\D+/g, '').slice(0, 8))} className="surface-input h-10 w-full rounded-lg px-3" placeholder="4 to 8 digits" required />
                 </div>
-                <label className="flex items-start gap-3 rounded-xl border border-[color:var(--border-subtle)] px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={form.createSubscription}
-                    onChange={(e) => setField('createSubscription', e.target.checked)}
-                    className="mt-1 h-4 w-4"
-                  />
+                <div className="flex items-start gap-3 rounded-xl border border-[color:var(--border-subtle)] px-4 py-3">
+                  <Checkbox checked={form.createSubscription} onChange={(e) => setField('createSubscription', e.target.checked)} />
                   <span className="text-sm leading-5">
                     Add a subscription for this tenant. If enabled, it starts now and expires after 1 year.
                   </span>
-                </label>
+                </div>
               </div>
             )}
 

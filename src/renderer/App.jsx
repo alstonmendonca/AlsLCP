@@ -3,12 +3,13 @@ import DashboardPage from '@/pages/DashboardPage';
 import LoginPage from '@/pages/LoginPage';
 import SetupPage from '@/pages/SetupPage';
 import ipcService from '@/services/ipcService';
+import { useToast } from '@/components/ToastProvider';
 import { applyThemePreset, resolveThemePreset } from '@/lib/themePresets';
 
 export default function App() {
+  const toast = useToast();
   const [booting, setBooting] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [user, setUser] = useState(null);
   const [setupStatus, setSetupStatus] = useState({ isInitialized: false, setup: null });
 
@@ -18,7 +19,7 @@ export default function App() {
     const restoreSession = async () => {
       try {
         if (!ipcService.isAvailable()) {
-          if (mounted) setError('Electron IPC is unavailable.');
+          if (mounted) toast.error('Electron IPC is unavailable.');
           return;
         }
 
@@ -38,7 +39,7 @@ export default function App() {
         }
       } catch (sessionError) {
         console.error('Failed to restore session:', sessionError);
-        if (mounted) setError('Unable to restore previous session.');
+        if (mounted) toast.error('Unable to restore previous session.');
       } finally {
         if (mounted) setBooting(false);
       }
@@ -50,17 +51,16 @@ export default function App() {
 
   const handleLogin = async (credentials) => {
     setLoading(true);
-    setError('');
     try {
       const loggedInUser = await ipcService.invoke('login', credentials || {});
       if (!loggedInUser) {
-        setError('Invalid credentials.');
+        toast.error('Invalid credentials.');
         return;
       }
       setUser(loggedInUser);
     } catch (loginError) {
       console.error('Login failed:', loginError);
-      setError('Unable to login right now.');
+      toast.error('Unable to login right now.');
     } finally {
       setLoading(false);
     }
@@ -71,7 +71,6 @@ export default function App() {
     if (setupUser) {
       setUser(setupUser);
     }
-    setError('');
   };
 
   const handleLogout = async () => {
@@ -81,7 +80,6 @@ export default function App() {
       console.error('Logout failed:', logoutError);
     }
     setUser(null);
-    setError('');
   };
 
   if (booting) {
@@ -100,7 +98,7 @@ export default function App() {
       return <SetupPage onSetupComplete={handleSetupComplete} />;
     }
 
-    return <LoginPage onLogin={handleLogin} loading={loading} error={error} />;
+    return <LoginPage onLogin={handleLogin} loading={loading} />;
   }
 
   return <DashboardPage user={user} onLogout={handleLogout} />;
